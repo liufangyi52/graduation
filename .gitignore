@@ -1,0 +1,9 @@
+node_modules/
+.npm-cache/
+dist/
+*.tsbuildinfo
+.env
+__pycache__/
+.pytest_cache/
+uploads/
+exports/
