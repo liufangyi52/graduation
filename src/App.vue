@@ -11,7 +11,7 @@ import { createWorkspaceService, type CalendarEvent, type Project, type RiskLeve
 import { createAuthService, roleLabels, type ManagedUser, type UserAccount, type UserRole } from './services/authService'
 import { createMeetingService } from './services/meetingService'
 import { formatLocalDate } from './utils/date'
-import { eventsForDate, formatCalendarDate, localIsoDate, shiftIsoDate } from './utils/calendar'
+import { calendarMonthDays, eventsForCalendarDate, formatCalendarMonth, localIsoDate, shiftCalendarMonth, visibleCalendarEvents } from './utils/calendar'
 
 const props = defineProps<{ user: UserAccount; token: string }>()
 const emit = defineEmits<{ logout: [] }>()
@@ -50,7 +50,7 @@ if (props.user.role === 'admin') void auth.listUsers(props.token).then((items) =
 if (props.user.role === 'admin' || props.user.role === 'auditor') void auth.listAuditLogs(props.token).then((items) => { auditLogs.value = items }).catch(() => {})
 void meetings.load().catch(() => {})
 const todayLabel = ref(formatLocalDate(new Date()))
-const selectedCalendarDate = ref(localIsoDate(new Date()))
+const selectedCalendarMonth = ref(`${localIsoDate(new Date()).slice(0, 7)}-01`)
 let dateTimer: number | undefined
 
 onMounted(() => {
@@ -138,8 +138,8 @@ const riskDonutStyle = computed(() => {
 const highRiskCount = computed(() => data.risks.filter((risk) => risk.level === 'high' && risk.status !== '已处理').length)
 const isMember = computed(() => props.user.role === 'member')
 const myTasks = computed(() => data.tasks.filter((task) => task.owner === props.user.name))
-const calendarEvents = computed(() => eventsForDate(data.calendarEvents, selectedCalendarDate.value))
-const selectedCalendarLabel = computed(() => formatCalendarDate(selectedCalendarDate.value))
+const calendarDays = computed(() => calendarMonthDays(selectedCalendarMonth.value))
+const selectedCalendarLabel = computed(() => formatCalendarMonth(selectedCalendarMonth.value))
 
 watch(() => route.path, (path) => {
   if (!auth.visibleRoutes(props.user.role).includes(path)) router.replace('/dashboard')
@@ -185,6 +185,12 @@ function openCalendarEvent(event: CalendarEvent) {
   if (event.type === 'meeting') return navigate('/meetings')
   const task = data.tasks.find((item) => item.id === event.id)
   if (task) selectedTask.value = task
+}
+function calendarEventsForDay(date: string) {
+  return eventsForCalendarDate(data.calendarEvents, date)
+}
+function visibleEventsForDay(date: string) {
+  return visibleCalendarEvents(calendarEventsForDay(date))
 }
 async function submitMeeting() {
   if (!meetingProjectId.value || !meetingTitle.value.trim() || !meetingContent.value.trim()) return flash('请先选择项目并填写会议纪要')
@@ -331,7 +337,7 @@ async function resolveRisk(id: string) {
 
         <section v-else-if="currentPage === 'experiments'" class="page-section"><div class="experiment-hero panel"><div><p class="eyebrow">CONTROLLED EVALUATION</p><h2>AI 运行模式对比</h2><p class="muted">实验指标将在接入评测数据源后显示。</p></div><button class="primary-button" disabled title="评测数据源尚未配置"><Zap :size="15" /> 暂不可运行</button></div><article class="panel empty-cell">当前没有可展示的实验运行记录。配置评测数据集和运行队列后，结果会在此持久化展示。</article></section>
 
-        <section v-else-if="currentPage === 'calendar'" class="page-section"><div class="calendar-toolbar"><button class="icon-button" title="前一天" @click="selectedCalendarDate = shiftIsoDate(selectedCalendarDate, -1)"><ArrowRight :size="16" class="rotate-180" /></button><div class="calendar-date"><strong>团队日历</strong><span>{{ selectedCalendarLabel }}</span></div><button class="icon-button" title="后一天" @click="selectedCalendarDate = shiftIsoDate(selectedCalendarDate, 1)"><ArrowRight :size="16" /></button><button class="secondary-button" @click="selectedCalendarDate = localIsoDate(new Date())">今天</button></div><article class="panel calendar-panel"><div class="calendar-panel-head"><div><p class="eyebrow">SCHEDULE</p><h3>{{ selectedCalendarLabel }}</h3></div><span class="tag gray">{{ calendarEvents.length }} 项日程</span></div><div v-if="calendarEvents.length" class="calendar-event-list"><button v-for="event in calendarEvents" :key="`${event.type}-${event.id}`" class="calendar-event" :class="event.type" @click="openCalendarEvent(event)"><span class="calendar-event-icon"><CalendarDays :size="17" /></span><div class="calendar-event-main"><span class="tag" :class="calendarTagClass(event)">{{ event.type === 'meeting' ? '会议' : statusLabel(event.state ?? 'todo') }}</span><strong>{{ event.title }}</strong><p>{{ event.project }}<span v-if="event.owner"> · {{ event.owner }}</span></p></div><span v-if="event.type === 'task' && event.priority" class="tag" :class="event.priority === '紧急' ? 'red' : event.priority === '高' ? 'amber' : 'blue'">{{ event.priority }}</span><ArrowRight :size="16" class="calendar-event-arrow" /></button></div><div v-else class="calendar-empty"><CalendarDays :size="26" /><strong>当天没有任务或会议日程</strong><span>可切换日期查看其他任务截止日和已提交会议。</span></div></article></section>
+        <section v-else-if="currentPage === 'calendar'" class="page-section"><div class="calendar-toolbar"><button class="icon-button" title="上个月" @click="selectedCalendarMonth = shiftCalendarMonth(selectedCalendarMonth, -1)"><ArrowRight :size="16" class="rotate-180" /></button><div class="calendar-date"><strong>团队日历</strong><span>{{ selectedCalendarLabel }}</span></div><button class="icon-button" title="下个月" @click="selectedCalendarMonth = shiftCalendarMonth(selectedCalendarMonth, 1)"><ArrowRight :size="16" /></button><button class="secondary-button" @click="selectedCalendarMonth = `${localIsoDate(new Date()).slice(0, 7)}-01`">今天</button></div><article class="panel calendar-panel"><div class="calendar-panel-head"><div><p class="eyebrow">MONTHLY SCHEDULE</p><h3>{{ selectedCalendarLabel }}</h3></div><span class="tag gray">任务截止日与会议创建日</span></div><div class="calendar-grid"><div v-for="weekday in ['一', '二', '三', '四', '五', '六', '日']" :key="weekday" class="calendar-weekday">周{{ weekday }}</div><div v-for="day in calendarDays" :key="day.date" class="calendar-day" :class="{ muted: !day.inMonth, today: day.date === localIsoDate(new Date()) }"><span class="calendar-day-number">{{ Number(day.date.slice(-2)) }}</span><div class="calendar-day-events"><button v-for="event in visibleEventsForDay(day.date)" :key="`${event.type}-${event.id}`" class="calendar-event" :class="event.type === 'meeting' ? 'meeting-event' : calendarTagClass(event)" :title="`${event.title} · ${event.project}`" @click="openCalendarEvent(event)">{{ event.title }}</button><span v-if="calendarEventsForDay(day.date).length > 3" class="calendar-more">还有 {{ calendarEventsForDay(day.date).length - 3 }} 条</span></div></div></div></article></section>
 
         <section v-else-if="currentPage === 'efficiency'" class="page-section"><div class="metric-grid compact"><article class="metric-card"><div class="metric-label">已完成任务 <Check :size="16" /></div><div class="metric-number">{{ completedCount }}</div><small>{{ deliveryCycleLabel }}</small></article><article class="metric-card"><div class="metric-label">平均交付周期 <Gauge :size="16" /></div><div class="metric-number">—</div><small>任务记录暂无完整周期数据</small></article><article class="metric-card"><div class="metric-label">活跃成员 <Users :size="16" /></div><div class="metric-number">{{ activeMemberCount }}<span>人</span></div><small>按当前任务负责人统计</small></article></div><div class="analysis-grid"><article class="panel chart-panel"><div class="panel-heading"><div><p class="eyebrow">TEAM DELIVERY</p><h3>团队完成趋势</h3></div><span class="chart-range">暂无时间序列数据</span></div><div class="empty-cell">完成任务后将基于真实更新时间生成趋势。</div></article><article class="panel member-panel"><div class="panel-heading"><div><p class="eyebrow">TEAM LEADERBOARD</p><h3>成员交付效率</h3></div></div><div class="empty-cell">暂无足够的历史数据。</div></article></div></section>
 
