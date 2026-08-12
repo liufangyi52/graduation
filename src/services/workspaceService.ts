@@ -4,6 +4,7 @@ export type TaskState = 'todo' | 'in-progress' | 'completed'
 export type RiskLevel = 'high' | 'medium' | 'low'
 
 export interface Task { id: string; title: string; project: string; owner: string; due: string; priority: '紧急' | '高' | '中' | '低'; state: TaskState; progress: number; source?: 'ai-review' }
+export interface CalendarEvent { id: string; type: 'task' | 'meeting'; title: string; project: string; date: string; owner?: string; priority?: Task['priority']; state?: TaskState }
 export interface Project { id: string; name: string; code: string; owner: string; state: '进行中' | '暂停' | '已归档'; progress: number; deadline: string; members: number }
 export interface Review { id: string; meeting: string; project: string; mode: string; confidence: number; time: string; status: 'pending' | 'approved' | 'rejected' }
 export interface Risk { id: string; title: string; task: string; level: RiskLevel; owner: string; status: '待处理' | '跟进中' | '已处理' }
@@ -15,7 +16,7 @@ const priorityMap = { urgent: '紧急', high: '高', medium: '中', low: '低' }
 const taskStateMap = { todo: 'todo', in_progress: 'in-progress', completed: 'completed' } as const
 
 export function createWorkspaceService(token: string) {
-  const state = reactive({ projects: [] as Project[], tasks: [] as Task[], reviews: [] as Review[], risks: [] as Risk[], notifications: [] as { id: string; title: string; time: string; read: boolean; path: string }[], feedbacks: [] as MemberFeedback[], settings: { model: 'DeepSeek V3', mode: 'RAG 检索增强', desensitize: true } })
+  const state = reactive({ projects: [] as Project[], tasks: [] as Task[], calendarEvents: [] as CalendarEvent[], reviews: [] as Review[], risks: [] as Risk[], notifications: [] as { id: string; title: string; time: string; read: boolean; path: string }[], feedbacks: [] as MemberFeedback[], settings: { model: 'DeepSeek V3', mode: 'RAG 检索增强', desensitize: true } })
   const request = async <T>(path: string, init: RequestInit = {}) => {
     const response = await fetch(`${apiBaseUrl}${path}`, { ...init, headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, ...init.headers } })
     const payload = await response.json().catch(() => ({}))
@@ -24,6 +25,18 @@ export function createWorkspaceService(token: string) {
   }
   const mapProject = (item: any): Project => ({ id: item.id, name: item.name, code: item.code, owner: item.owner_name, state: statusMap[item.status as keyof typeof statusMap] ?? '进行中', progress: 0, deadline: item.end_date ?? '未设置', members: Number(item.members ?? 0) })
   const mapTask = (item: any): Task => ({ id: item.id, title: item.title, project: item.project_name, owner: item.assignee_name, due: item.due_date ?? '未设置', priority: priorityMap[item.priority as keyof typeof priorityMap] ?? '中', state: taskStateMap[item.status as keyof typeof taskStateMap] ?? 'todo', progress: Number(item.progress ?? 0) })
+  const mapCalendarEvent = (item: any): CalendarEvent => ({
+    id: item.id,
+    type: item.type === 'meeting' ? 'meeting' : 'task',
+    title: item.title,
+    project: item.project_name,
+    date: item.date,
+    ...(item.type === 'task' ? {
+      owner: item.assignee_name,
+      priority: priorityMap[item.priority as keyof typeof priorityMap] ?? '中',
+      state: taskStateMap[item.status as keyof typeof taskStateMap] ?? 'todo',
+    } : {}),
+  })
   return {
     state,
     async load() {
@@ -32,6 +45,10 @@ export function createWorkspaceService(token: string) {
       state.tasks.splice(0, state.tasks.length, ...tasks.map(mapTask))
       state.risks.splice(0, state.risks.length, ...risks.map((item) => ({ id: item.id, title: item.title, task: item.description ?? '', level: item.level, owner: item.owner ?? '', status: (item.status === 'resolved' ? '已处理' : '待处理') as Risk['status'] })))
       state.notifications.splice(0, state.notifications.length, ...notifications.map((item) => ({ id: item.id, title: item.title, time: item.created_at, read: Boolean(item.is_read), path: item.link || '/notifications' })))
+    },
+    async loadCalendarEvents() {
+      const items = await request<any[]>('/calendar-events')
+      state.calendarEvents.splice(0, state.calendarEvents.length, ...items.map(mapCalendarEvent))
     },
     async createProject(name: string) {
       const item = await request<any>('/projects', { method: 'POST', body: JSON.stringify({ name, code: `PRJ-${Date.now()}` }) })
