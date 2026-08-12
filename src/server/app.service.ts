@@ -78,6 +78,28 @@ export class AppService {
     return rows
   }
 
+  async calendarEvents(user: SessionUser) {
+    const projectFilter = user.role === 'manager' ? 'p.owner_id=?' : user.role === 'member' ? 'pm.user_id=?' : '1=1'
+    const membershipJoin = user.role === 'member' ? 'JOIN project_members pm ON pm.project_id=p.id' : ''
+    const values = user.role === 'admin' || user.role === 'auditor' ? [] : [user.id, user.id]
+    const [rows] = await pool.query<any[]>(`
+      SELECT t.id,'task' type,t.title,p.id project_id,p.name project_name,DATE(t.due_date) date,u.name assignee_name,t.priority,t.status
+      FROM tasks t
+      JOIN projects p ON p.id=t.project_id
+      ${membershipJoin}
+      JOIN users u ON u.id=t.assignee_id
+      WHERE t.due_date IS NOT NULL AND ${projectFilter}
+      UNION ALL
+      SELECT m.id,'meeting' type,m.title,p.id project_id,p.name project_name,DATE(m.created_at) date,NULL assignee_name,NULL priority,NULL status
+      FROM meetings m
+      JOIN projects p ON p.id=m.project_id
+      ${membershipJoin}
+      WHERE ${projectFilter}
+      ORDER BY date ASC, type ASC, title ASC
+    `, values)
+    return rows
+  }
+
   async updateTask(user: SessionUser, id: string, input: { status?: string; progress?: number }) {
     try { assertTaskUpdateInput(input) } catch (error) { throw new BadRequestException(error instanceof Error ? error.message : 'Invalid task update') }
     const [rows] = await pool.query<any[]>('SELECT assignee_id, project_id FROM tasks WHERE id=?', [id])
