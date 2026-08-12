@@ -5,13 +5,12 @@ export function canRegisterRole(role: AuthorizationRole): boolean {
 }
 
 export function canUpdateTask(user: { role: AuthorizationRole; id: string }, assigneeId: string): boolean {
-  if (user.role === 'auditor') return false
   if (user.role === 'member') return user.id === assigneeId
-  return user.role === 'manager' || user.role === 'admin'
+  return user.role === 'manager'
 }
 
 export function canManageProject(user: { role: AuthorizationRole; id: string }, ownerId: string): boolean {
-  return user.role === 'admin' || (user.role === 'manager' && user.id === ownerId)
+  return user.role === 'manager' && user.id === ownerId
 }
 
 export const taskStatuses = ['todo', 'in_progress', 'completed', 'closed'] as const

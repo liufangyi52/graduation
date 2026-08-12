@@ -3,10 +3,12 @@ import { assertTaskUpdateInput, canManageProject, canUpdateTask } from '../src/s
 
 it('enforces task and project ownership boundaries', () => {
   expect(canUpdateTask({ role: 'member', id: 'm1' }, 'm2')).toBe(false)
+  expect(canUpdateTask({ role: 'member', id: 'm1' }, 'm1')).toBe(true)
   expect(canUpdateTask({ role: 'manager', id: 'manager-1' }, 'm2')).toBe(true)
+  expect(canUpdateTask({ role: 'admin', id: 'admin-1' }, 'm2')).toBe(false)
   expect(canManageProject({ role: 'manager', id: 'manager-1' }, 'manager-2')).toBe(false)
   expect(canManageProject({ role: 'manager', id: 'manager-1' }, 'manager-1')).toBe(true)
-  expect(canManageProject({ role: 'admin', id: 'admin-1' }, 'manager-2')).toBe(true)
+  expect(canManageProject({ role: 'admin', id: 'admin-1' }, 'manager-2')).toBe(false)
 })
 
 it('rejects invalid task status and progress instead of coercing values', () => {

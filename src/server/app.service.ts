@@ -64,11 +64,12 @@ export class AppService {
   }
 
   async createProject(user: SessionUser, input: { name: string; code: string; description?: string; endDate?: string }) {
-    if (!['manager', 'admin'].includes(user.role)) throw new ForbiddenException('无权创建项目')
+    if (user.role !== 'manager') throw new ForbiddenException('Only managers can perform this action')
     if (!input.name?.trim() || !input.code?.trim()) throw new BadRequestException('项目名称和编码不能为空')
     const id = randomUUID()
     await pool.execute('INSERT INTO projects (id,name,code,description,owner_id,end_date) VALUES (?,?,?,?,?,?)', [id, input.name.trim(), input.code.trim(), input.description ?? null, user.id, input.endDate ?? null])
     await pool.execute('INSERT INTO project_members (project_id,user_id,project_role) VALUES (?,?,?)', [id, user.id, 'manager'])
+    await this.audit(user.id, 'project.created', 'project', id, { code: input.code.trim() })
     return { id, ...input, ownerId: user.id, status: 'active' }
   }
 
@@ -110,6 +111,7 @@ export class AppService {
     const progress = input.progress
     const status = progress === 100 ? 'completed' : input.status
     await pool.execute('UPDATE tasks SET status=COALESCE(?,status), progress=COALESCE(?,progress) WHERE id=?', [status ?? null, progress ?? null, id])
+    await this.audit(user.id, 'task.updated', 'task', id, { projectId: rows[0].project_id, status: status ?? null, progress: progress ?? null })
     return { id, status, progress }
   }
 
@@ -136,6 +138,7 @@ export class AppService {
     } finally {
       connection.release()
     }
+    await this.audit(user.id, 'task.feedback_created', 'task_feedback', id, { taskId, progress: input.progress })
     return { id, taskId, authorId: user.id, ...input }
   }
 
@@ -190,7 +193,6 @@ export class AppService {
   }
 
   private async assertProjectManager(user: SessionUser, projectId: string) {
-    if (user.role === 'admin') return
     if (user.role !== 'manager') throw new ForbiddenException('Only managers can perform this action')
     const [rows] = await pool.query<any[]>('SELECT owner_id FROM projects WHERE id=?', [projectId])
     if (!rows[0] || rows[0].owner_id !== user.id) throw new ForbiddenException('You do not manage this project')
@@ -269,7 +271,7 @@ export class AppService {
     if (user.role === 'auditor' || user.role === 'member') throw new ForbiddenException('Read-only role')
     const [rows] = await pool.query<any[]>('SELECT project_id FROM risks WHERE id=?', [id])
     if (!rows[0]) throw new BadRequestException('Risk does not exist')
-    if (user.role === 'manager') await this.assertProjectManager(user, rows[0].project_id)
+    await this.assertProjectManager(user, rows[0].project_id)
     await pool.execute('UPDATE risks SET status="resolved",resolved_by=?,resolved_at=CURRENT_TIMESTAMP WHERE id=? AND status="open"', [user.id, id])
     await this.audit(user.id, 'risk.resolved', 'risk', id)
     return { id, status: 'resolved' }

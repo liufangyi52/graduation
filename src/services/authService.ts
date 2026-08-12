@@ -39,8 +39,12 @@ async function request<T>(path: string, init: RequestInit = {}) {
 const routeMatrix: Record<UserRole, string[]> = {
   manager: ['/dashboard', '/projects', '/tasks', '/risks', '/notifications', '/experiments', '/calendar', '/efficiency', '/meetings', '/reviews'],
   member: ['/dashboard', '/projects', '/tasks', '/my-tasks', '/notifications'],
-  admin: ['/dashboard', '/projects', '/tasks', '/risks', '/notifications', '/experiments', '/settings', '/meetings', '/reviews', '/users', '/audit-logs'],
+  admin: ['/dashboard', '/notifications', '/settings', '/users', '/audit-logs'],
   auditor: ['/dashboard', '/projects', '/tasks', '/risks', '/notifications', '/audit-logs'],
+}
+
+export function canManageProjectBusiness(role: UserRole): boolean {
+  return role === 'manager'
 }
 
 export function createAuthService() {
