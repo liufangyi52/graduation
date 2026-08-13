@@ -7,6 +7,7 @@ const activeTaskStatuses = ['todo', 'in_progress', 'completed'] as const
 const projectRoles = ['manager', 'member'] as const
 const projectStatuses = ['active', 'paused', 'archived'] as const
 const priorities = ['low', 'medium', 'high', 'urgent'] as const
+const analysisModes = ['manual', 'llm', 'rag', 'agent'] as const
 
 export class RegisterDto {
   @IsIn(roles) role!: typeof roles[number]
@@ -129,6 +130,10 @@ export class TaskNoteDto {
 export class ImportMeetingDto {
   @IsUUID() projectId!: string
   @IsString() @MinLength(1) title!: string
+}
+
+export class AnalysisRequestDto {
+  @IsOptional() @IsIn(analysisModes) mode?: typeof analysisModes[number]
 }
 
 export class ProjectMemberDto {
