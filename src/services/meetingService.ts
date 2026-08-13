@@ -4,6 +4,8 @@ export interface MeetingRecord { id: string; projectId: string; title: string; c
 export type AnalysisMode = 'manual' | 'llm' | 'rag' | 'agent'
 export interface AnalysisExecutionMetadata { retrievalStatus?: string; [key: string]: unknown }
 export interface AnalysisRecord { id: string; meetingId: string; title: string; status: string; result: any; createdAt: string; mode: AnalysisMode; executionMetadata: AnalysisExecutionMetadata | null; durationMs: number; modelCallCount: number }
+export interface ExperimentSummaryMetric { runCount: number; pendingCount: number; failedCount: number; approvedCount: number; rejectedCount: number; totalDurationMs: number; averageDurationMs: number; totalModelCalls: number }
+export type ExperimentSummary = Record<AnalysisMode, ExperimentSummaryMetric>
 export interface ReviewDraft { summary: string; decisions: string[]; tasks: any[]; risks: any[] }
 export interface ReviewDetail { meeting: any; analysis: any; draft: ReviewDraft | null; evidence: Array<{ start: number; end: number; snippet: string }> }
 export interface MeetingVersionSummary { id: string; meetingId: string; versionNumber: number; sourceType: string; createdAt: string; current?: boolean }
@@ -55,5 +57,6 @@ export function createMeetingService(token: string) {
     async getReviewDetail(meetingId: string) { const detail = await request<ReviewDetail>(`/meetings/${meetingId}/review`); return detail.analysis ? { ...detail, analysis: mapAnalysisRecord(detail.analysis) } : detail },
     async saveReviewDraft(analysisId: string, draft: ReviewDraft) { return request<ReviewDraft>(`/analyses/${analysisId}/draft`, { method: 'PUT', body: JSON.stringify(draft) }) },
     async reanalyze(id: string, mode: AnalysisMode = 'llm') { return request<any>(`/analyses/${id}/reanalyze`, { method: 'POST', body: JSON.stringify({ mode }) }) },
+    async experimentSummary(projectId: string) { return request<ExperimentSummary>(`/projects/${projectId}/experiment-summary`) },
   }
 }
