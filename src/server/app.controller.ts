@@ -14,6 +14,7 @@ export class AppController {
   @Post('auth/login') login(@Body() body: LoginDto) { return this.app.login(body.email, body.password) }
   @Get('auth/me') async me(@Headers('authorization') authorization?: string) { return this.app.databaseUser(authorization?.replace(/^Bearer\s+/i, '')) }
   @Get('projects') async projects(@Headers('authorization') authorization?: string) { return this.app.projects(await this.user(authorization)) }
+  @Get('projects/:id/detail') async projectDetail(@Headers('authorization') authorization: string | undefined, @Param('id') id: string) { return this.app.projectDetail(await this.user(authorization), id) }
   @Get('projects/deleted') async deletedProjects(@Headers('authorization') authorization?: string) { return this.app.deletedProjects(await this.user(authorization)) }
   @Post('projects') async createProject(@Headers('authorization') authorization: string | undefined, @Body() body: CreateProjectDto) { return this.app.createProject(await this.user(authorization), body) }
   @Patch('projects/:id') async updateProject(@Headers('authorization') authorization: string | undefined, @Param('id') id: string, @Body() body: UpdateProjectDto) { return this.app.updateProject(await this.user(authorization), id, body) }

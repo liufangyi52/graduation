@@ -113,6 +113,41 @@ export class AppService {
     return rows
   }
 
+  async projectDetail(user: SessionUser, projectId: string) {
+    const access = user.role === 'manager'
+      ? 'p.owner_id=?'
+      : user.role === 'member'
+        ? 'EXISTS (SELECT 1 FROM project_members pm_access WHERE pm_access.project_id=p.id AND pm_access.user_id=?)'
+        : '1=1'
+    const [projectRows] = await pool.query<any[]>(`SELECT p.id,p.name,p.code,p.description,p.status,p.start_date,p.end_date,p.owner_id,u.name owner_name,
+      COALESCE((SELECT ROUND(AVG(t.progress)) FROM tasks t WHERE t.project_id=p.id),0) progress,
+      (SELECT COUNT(*) FROM tasks t WHERE t.project_id=p.id) task_count,
+      (SELECT COUNT(*) FROM tasks t WHERE t.project_id=p.id AND t.status='completed') completed_task_count,
+      (SELECT COUNT(*) FROM ai_analyses a JOIN meetings m ON m.id=a.meeting_id WHERE m.project_id=p.id AND a.status='pending') pending_review_count,
+      (SELECT COUNT(*) FROM risks r WHERE r.project_id=p.id AND r.status='open') open_risk_count
+      FROM projects p JOIN users u ON u.id=p.owner_id WHERE p.id=? AND p.deleted_at IS NULL AND ${access}`, user.role === 'admin' || user.role === 'auditor' ? [projectId] : [projectId, user.id])
+    if (!projectRows[0]) throw new BadRequestException('Project does not exist')
+    const project = projectRows[0]
+    const [tasks] = await pool.query<any[]>(`SELECT t.id,t.title,t.description,t.project_id,t.priority,t.status,t.progress,t.due_date,t.assignee_id,u.name assignee_name
+      FROM tasks t JOIN users u ON u.id=t.assignee_id WHERE t.project_id=? ORDER BY t.updated_at DESC`, [projectId])
+    const [meetings] = await pool.query<any[]>(`SELECT m.id,m.title,m.created_at,
+      (SELECT COUNT(*) FROM meeting_versions mv WHERE mv.meeting_id=m.id) version_count,
+      (SELECT a.status FROM ai_analyses a WHERE a.meeting_id=m.id ORDER BY a.created_at DESC LIMIT 1) latest_analysis_status
+      FROM meetings m WHERE m.project_id=? ORDER BY m.created_at DESC`, [projectId])
+    const [risks] = await pool.query<any[]>('SELECT id,title,description,level,status,created_at,resolved_at FROM risks WHERE project_id=? ORDER BY created_at DESC', [projectId])
+    const [members] = await pool.query<any[]>('SELECT u.id,u.name,u.email,u.role,u.is_active,pm.project_role FROM project_members pm JOIN users u ON u.id=pm.user_id WHERE pm.project_id=? ORDER BY pm.project_role DESC,u.name ASC', [projectId])
+    const canEdit = user.role === 'manager' && project.owner_id === user.id
+    return {
+      project: { id: project.id, name: project.name, code: project.code, description: project.description, status: project.status, startDate: project.start_date, endDate: project.end_date, ownerId: project.owner_id, ownerName: project.owner_name, progress: Number(project.progress ?? 0) },
+      tasks: tasks.map((task) => ({ ...task, assigneeName: task.assignee_name, dueDate: task.due_date })),
+      meetings: meetings.map((meeting) => ({ ...meeting, createdAt: meeting.created_at, versionCount: Number(meeting.version_count ?? 0), latestAnalysisStatus: meeting.latest_analysis_status ?? null })),
+      risks: risks.map((risk) => ({ ...risk, createdAt: risk.created_at, resolvedAt: risk.resolved_at })),
+      members,
+      counts: { tasks: Number(project.task_count ?? tasks.length), completedTasks: Number(project.completed_task_count ?? tasks.filter((task) => task.status === 'completed').length), pendingReviews: Number(project.pending_review_count ?? 0), openRisks: Number(project.open_risk_count ?? risks.filter((risk) => risk.status === 'open').length), members: members.length },
+      permissions: { canEdit, canCreateTask: canEdit, canManageMembers: canEdit, canManageRisks: canEdit },
+    }
+  }
+
   async listProjectTags(user: SessionUser, projectId: string) {
     await this.assertProjectViewer(user, projectId)
     const [rows] = await pool.query<any[]>('SELECT t.id,t.project_id,t.name,t.created_at,EXISTS(SELECT 1 FROM project_tag_links l WHERE l.project_id=? AND l.tag_id=t.id) linked FROM project_tags t WHERE t.project_id=? ORDER BY t.created_at ASC', [projectId, projectId])

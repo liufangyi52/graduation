@@ -141,3 +141,7 @@ export class SystemSettingsDto {
   @IsString() @MinLength(1) mode!: string
   @IsBoolean() desensitize!: boolean
 }
+
+export class ProjectDetailQueryDto {
+  @IsOptional() @IsString() tab?: string
+}

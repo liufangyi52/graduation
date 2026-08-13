@@ -14,6 +14,15 @@ export interface ProjectMember { id: string; name: string; email: string; role: 
 export interface ProjectTag { id: string; project_id: string; name: string; linked: boolean }
 export interface DesensitizationRule { id: string; project_id: string; name: string; pattern: string; replacement: string; enabled: boolean }
 export interface TaskNote { id: string; task_id: string; author_id: string; author_name: string; content: string; created_at: string }
+export interface ProjectDetail {
+  project: { id: string; name: string; code: string; description?: string; status: string; startDate?: string; endDate?: string; ownerId: string; ownerName: string; progress: number }
+  tasks: Array<Task & { description?: string; dueDate?: string; assigneeName?: string }>
+  meetings: Array<{ id: string; title: string; createdAt: string; versionCount: number; latestAnalysisStatus?: string | null }>
+  risks: Array<{ id: string; title: string; description?: string; level: RiskLevel; status: string; createdAt: string; resolvedAt?: string | null }>
+  members: ProjectMember[]
+  counts: { tasks: number; completedTasks: number; pendingReviews: number; openRisks: number; members: number }
+  permissions: { canEdit: boolean; canCreateTask: boolean; canManageMembers: boolean; canManageRisks: boolean }
+}
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:3000/api'
 const statusMap = { active: '进行中', paused: '暂停', archived: '已归档' } as const
@@ -63,6 +72,7 @@ export function createWorkspaceService(token: string) {
       return project
     },
     async updateProject(id: string, input: { name?: string; code?: string; description?: string; endDate?: string | null; status?: 'active' | 'paused' | 'archived' }) { return request(`/projects/${id}`, { method: 'PATCH', body: JSON.stringify(input) }) },
+    async getProjectDetail(projectId: string) { return request<ProjectDetail>(`/projects/${projectId}/detail`) },
     async deleteProject(id: string) { return request(`/projects/${id}`, { method: 'DELETE' }) },
     async deletedProjects() { return request<any[]>('/projects/deleted') },
     async restoreProject(id: string) { return request(`/projects/${id}/restore`, { method: 'POST' }) },
