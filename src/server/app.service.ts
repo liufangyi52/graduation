@@ -687,12 +687,14 @@ export class AppService {
   }
 
   async reviewDetail(user: SessionUser, meetingId: string) {
-    const [meetings] = await pool.query<any[]>(`SELECT m.id,m.project_id,m.title,m.created_at,v.version_number,v.desensitized_content
+    const [meetings] = await pool.query<any[]>(`SELECT m.id,m.project_id,m.title,m.content,m.created_at,
+      COALESCE(v.version_number,(SELECT MAX(v2.version_number) FROM meeting_versions v2 WHERE v2.meeting_id=m.id)) version_number,
+      COALESCE(v.desensitized_content,(SELECT v3.desensitized_content FROM meeting_versions v3 WHERE v3.meeting_id=m.id ORDER BY v3.version_number DESC LIMIT 1)) desensitized_content
       FROM meetings m JOIN projects p ON p.id=m.project_id LEFT JOIN meeting_versions v ON v.id=m.current_version_id
       WHERE m.id=? AND p.deleted_at IS NULL`, [meetingId])
     const meeting = meetings[0]
     if (!meeting) throw new BadRequestException('Meeting does not exist')
-    await this.assertProjectViewer(user, meeting.project_id)
+    if (user.role !== 'admin' && user.role !== 'auditor') await this.assertProjectViewer(user, meeting.project_id)
     const [analyses] = await pool.query<any[]>(`SELECT id,status,model,result_json,created_at,reviewed_at,rejection_reason,reanalysis_of_id FROM ai_analyses
       WHERE meeting_id=?${user.role === 'member' ? " AND status='approved'" : ''} ORDER BY created_at DESC LIMIT 1`, [meetingId])
     const analysis = analyses[0] ? { ...analyses[0], result: analyses[0].result_json ? normalizeStoredAnalysis(analyses[0].result_json) : null } : null
@@ -701,10 +703,11 @@ export class AppService {
       const [draftRows] = await pool.query<any[]>('SELECT draft_json FROM ai_analysis_drafts WHERE analysis_id=?', [analysis.id])
       if (draftRows[0]) draft = normalizeStoredAnalysis(draftRows[0].draft_json)
     }
-    const text = String(meeting.desensitized_content ?? '')
+    let text = String(meeting.desensitized_content ?? '')
+    if (!text && meeting.content) text = (await this.desensitizeForProject(meeting.project_id, String(meeting.content))).content
     const evidence = analysis?.result?.tasks?.flatMap((task: any) => {
       const index = text.indexOf(task.title)
-      return index >= 0 ? [{ start: index, end: index + task.title.length, snippet: text.slice(Math.max(0, index - 80), Math.min(text.length, index + task.title.length + 80)) }] : []
+      return index >= 0 ? [{ start: index, end: index + task.title.length, snippet: text.slice(Math.max(0, index - 80), Math.min(text.length, index + task.title.length + 80)), source: 'generated_snippet' }] : []
     }) ?? []
     const safeAnalysis = analysis && user.role === 'member' ? { ...analysis, rejection_reason: undefined } : analysis
     return { meeting: { id: meeting.id, projectId: meeting.project_id, title: meeting.title, createdAt: meeting.created_at, versionNumber: meeting.version_number, desensitizedContent: text }, analysis: safeAnalysis, draft, evidence }
@@ -715,11 +718,11 @@ export class AppService {
     if (!rows[0]) throw new BadRequestException('Analysis does not exist')
     await this.assertProjectManager(user, rows[0].project_id)
     if (rows[0].status !== 'pending') throw new BadRequestException('Analysis has already been reviewed')
-    if (!draft || !draft.summary?.trim() || !Array.isArray(draft.tasks) || draft.tasks.length < 1 || draft.tasks.length > 50) throw new BadRequestException('Review draft is invalid')
+    if (!draft || !draft.summary?.trim() || !Array.isArray(draft.decisions) || draft.decisions.some((item) => typeof item !== 'string' || !item.trim() || item.length > 4000) || !Array.isArray(draft.tasks) || draft.tasks.length < 1 || draft.tasks.length > 50 || !Array.isArray(draft.risks) || draft.risks.some((risk) => !risk?.title?.trim() || !['low', 'medium', 'high'].includes(risk.level) || (risk.description?.length ?? 0) > 4000)) throw new BadRequestException('Review draft is invalid')
     let normalized: ReviewDraft
     try { normalized = normalizeStoredAnalysis(draft) } catch (error) { throw new BadRequestException(error instanceof Error ? error.message : 'Review draft is invalid') }
     for (const task of normalized.tasks) {
-      if (task.title.length > 180 || (task.description?.length ?? 0) > 4000) throw new BadRequestException('Review draft task fields exceed limits')
+      if (task.title.length > 180 || (task.description?.length ?? 0) > 4000 || (task.owner_email && !/^\S+@\S+\.\S+$/.test(task.owner_email)) || (task.due_date && !/^\d{4}-\d{2}-\d{2}$/.test(task.due_date))) throw new BadRequestException('Review draft task fields exceed limits')
     }
     await pool.execute(`INSERT INTO ai_analysis_drafts (analysis_id,draft_json,updated_by) VALUES (?,?,?)
       ON DUPLICATE KEY UPDATE draft_json=VALUES(draft_json),updated_by=VALUES(updated_by),updated_at=CURRENT_TIMESTAMP`, [analysisId, JSON.stringify(normalized), user.id])
@@ -734,17 +737,11 @@ export class AppService {
     if (rows[0].status !== 'pending') throw new BadRequestException('Analysis has already been reviewed')
     if (!approved && (!reason?.trim() || reason.trim().length > 500)) throw new BadRequestException('Review reason must contain 1 to 500 characters')
     if (approved && reason !== undefined && (!reason.trim() || reason.trim().length > 500)) throw new BadRequestException('Review reason must contain 1 to 500 characters')
-    let draftRows: any[] = []
-    try {
-      const [rowsWithDraft] = await pool.query<any[]>('SELECT draft_json FROM ai_analysis_drafts WHERE analysis_id=?', [analysisId])
-      draftRows = rowsWithDraft
-    } catch {
-      draftRows = []
-    }
-    const result = draftRows[0]?.draft_json ? normalizeStoredAnalysis(draftRows[0].draft_json) : normalizeStoredAnalysis(rows[0].result_json)
     const connection = await pool.getConnection()
     try {
       await connection.beginTransaction()
+      const [draftRows] = await connection.query<any[]>('SELECT draft_json FROM ai_analysis_drafts WHERE analysis_id=? FOR UPDATE', [analysisId])
+      const result = draftRows[0]?.draft_json ? normalizeStoredAnalysis(draftRows[0].draft_json) : normalizeStoredAnalysis(rows[0].result_json)
       await connection.execute('UPDATE ai_analyses SET status=?,reviewed_by=?,reviewed_at=CURRENT_TIMESTAMP,rejection_reason=? WHERE id=?', [approved ? 'approved' : 'rejected', user.id, approved ? null : reason?.trim() ?? null, analysisId])
       await connection.execute('INSERT INTO notifications (id,user_id,title,body,link) VALUES (?,?,?,?,?)', [randomUUID(), rows[0].requested_by, `${approved ? '分析已通过' : '分析被驳回'}：${rows[0].meeting_title}`, approved ? '分析结果已通过审核。' : '分析结果需要重新处理。', '/reviews'])
       if (approved) {
