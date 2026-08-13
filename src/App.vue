@@ -10,7 +10,7 @@ import {
 import { createWorkspaceService, type CalendarEvent, type DesensitizationRule, type Project, type ProjectMember, type ProjectTag, type RiskLevel, type Task, type TaskNote, type TaskState } from './services/workspaceService'
 import { canManageProjectBusiness, canUpdateVisibleTasks, createAuthService, roleLabels, type ManagedUser, type SystemSettings, type UserAccount, type UserRole } from './services/authService'
 import { createMeetingService } from './services/meetingService'
-import type { AnalysisMode, ExperimentSummary, ExperimentSummaryMetric, MeetingVersion, MeetingVersionSummary } from './services/meetingService'
+import type { AnalysisMode, ExperimentSummary, ExperimentSummaryMetric, MeetingVersion, MeetingVersionSummary, RagIndexStatus } from './services/meetingService'
 import ProjectDetailPage from './components/ProjectDetailPage.vue'
 import MeetingReviewPage from './components/MeetingReviewPage.vue'
 import TaskBoardPage from './components/TaskBoardPage.vue'
@@ -61,6 +61,7 @@ const meetingContent = ref('')
 const meetingAnalysisMode = ref<AnalysisMode>('llm')
 const experimentProjectId = ref('')
 const experimentSummary = ref<ExperimentSummary | null>(null)
+const ragIndexStatus = ref<RagIndexStatus | null>(null)
 const experimentLoading = ref(false)
 const ragIndexSyncing = ref(false)
 const experimentNotice = ref('')
@@ -220,26 +221,31 @@ const experimentModes: Array<{ mode: AnalysisMode; label: string }> = [
 const emptyExperimentMetric = (): ExperimentSummaryMetric => ({ runCount: 0, pendingCount: 0, failedCount: 0, approvedCount: 0, rejectedCount: 0, totalDurationMs: 0, averageDurationMs: 0, totalModelCalls: 0 })
 const experimentRows = computed(() => experimentModes.map(({ mode, label }) => ({ mode, label, ...(experimentSummary.value?.[mode] ?? emptyExperimentMetric()) })))
 const experimentRunCount = computed(() => experimentRows.value.reduce((total, item) => total + item.runCount, 0))
+const ragIndexReady = computed(() => Boolean(ragIndexStatus.value?.configured && ragIndexStatus.value.ready))
 
 async function loadExperimentSummary() {
   if (!canManageBusiness.value || !experimentProjectId.value) return
   experimentLoading.value = true
   experimentNotice.value = ''
   try {
-    experimentSummary.value = await meetings.experimentSummary(experimentProjectId.value)
+    const [summary, status] = await Promise.all([meetings.experimentSummary(experimentProjectId.value), meetings.ragIndexStatus(experimentProjectId.value)])
+    experimentSummary.value = summary
+    ragIndexStatus.value = status
   } catch (reason) {
     experimentSummary.value = null
+    ragIndexStatus.value = null
     experimentNotice.value = reason instanceof Error ? reason.message : '实验汇总加载失败'
   } finally { experimentLoading.value = false }
 }
 
 async function syncRagIndex() {
-  if (!canManageBusiness.value || !experimentProjectId.value) return
+  if (!canManageBusiness.value || !experimentProjectId.value || !ragIndexReady.value) return
   ragIndexSyncing.value = true
   experimentNotice.value = ''
   try {
     const result = await meetings.syncRagIndex(experimentProjectId.value)
     experimentNotice.value = `RAG 索引同步完成：${result.indexedChunks} 个脱敏分块`
+    ragIndexStatus.value = await meetings.ragIndexStatus(experimentProjectId.value)
   } catch (reason) {
     experimentNotice.value = reason instanceof Error ? reason.message : 'RAG 索引同步失败'
   } finally { ragIndexSyncing.value = false }
@@ -641,7 +647,7 @@ async function saveSystemSettings() {
 
         <section v-else-if="currentPage === 'notifications'" class="page-section"><div class="filter-bar"><button class="segmented" :class="{ selected: !unreadOnly }" @click="unreadOnly = false">全部通知</button><button class="segmented" :class="{ selected: unreadOnly }" @click="unreadOnly = true">未读通知</button><span class="result-count">{{ filteredNotifications.length }} 条</span></div><div class="notification-list"><article v-for="item in filteredNotifications" :key="item.id" class="notification-item" :class="{ unread: !item.read }" @click="markNotification(item.id, item.path)"><span class="notification-icon"><Bell :size="17" /></span><div><strong>{{ item.title }}</strong><p>{{ item.time }}</p></div><span v-if="!item.read" class="unread-dot"></span><ArrowRight :size="16" class="notification-arrow" /></article></div></section>
 
-        <section v-else-if="currentPage === 'experiments' && canManageBusiness" class="page-section"><article class="panel"><div class="panel-heading"><div><p class="eyebrow">CONTROLLED EVALUATION</p><h3>四种分析模式实验汇总</h3></div><label class="meeting-field"><span>项目</span><select v-model="experimentProjectId" @change="loadExperimentSummary"><option value="">选择项目</option><option v-for="project in data.projects" :key="project.id" :value="project.id">{{ project.name }}</option></select></label></div><div v-if="experimentProjectId" class="page-actions"><button class="secondary-button" :disabled="ragIndexSyncing" @click="syncRagIndex">{{ ragIndexSyncing ? '同步中…' : '同步 RAG 索引' }}</button><small class="muted">未配置时 RAG 作为无检索基线运行</small></div><div v-if="experimentProjectId" class="metric-grid"><article class="metric-card"><div class="metric-label">运行次数 <TestTube2 :size="16" /></div><div class="metric-number">{{ experimentRunCount }}</div><small>所选项目的全部模式</small></article><article class="metric-card"><div class="metric-label">模式数量 <BarChart3 :size="16" /></div><div class="metric-number">{{ experimentRows.length }}</div><small>零运行模式也会保留</small></article></div><p v-if="experimentNotice" class="meeting-notice muted">{{ experimentNotice }}</p><div v-if="experimentProjectId" class="table-wrap"><table><thead><tr><th>模式</th><th>运行</th><th>待审核</th><th>失败</th><th>通过</th><th>驳回</th><th>平均耗时</th><th>模型调用次数</th></tr></thead><tbody><tr v-for="summary in experimentRows" :key="summary.mode"><td><strong>{{ summary.label }}</strong><small v-if="summary.mode === 'rag'">检索未配置时为无检索基线</small></td><td>{{ summary.runCount }}</td><td>{{ summary.pendingCount }}</td><td>{{ summary.failedCount }}</td><td>{{ summary.approvedCount }}</td><td>{{ summary.rejectedCount }}</td><td>{{ summary.averageDurationMs }} ms</td><td>{{ summary.totalModelCalls }}</td></tr></tbody></table></div><div v-else class="empty-cell">请选择项目以查看实验汇总。</div><div v-if="experimentLoading" class="empty-cell">正在加载实验汇总。</div></article></section>
+        <section v-else-if="currentPage === 'experiments' && canManageBusiness" class="page-section"><article class="panel"><div class="panel-heading"><div><p class="eyebrow">CONTROLLED EVALUATION</p><h3>四种分析模式实验汇总</h3></div><label class="meeting-field"><span>项目</span><select v-model="experimentProjectId" @change="loadExperimentSummary"><option value="">选择项目</option><option v-for="project in data.projects" :key="project.id" :value="project.id">{{ project.name }}</option></select></label></div><div v-if="experimentProjectId" class="page-actions"><button class="secondary-button" :disabled="ragIndexSyncing || !ragIndexReady" @click="syncRagIndex">{{ ragIndexSyncing ? '同步中…' : '同步 RAG 索引' }}</button><small v-if="!ragIndexStatus?.configured" class="muted">RAG 未配置：按无检索基线运行，无法同步索引。</small><small v-else-if="!ragIndexStatus?.ready" class="muted">RAG 依赖不可用：请检查 Qdrant 服务。</small><small v-else-if="ragIndexStatus.eligibleVersionCount === 0" class="muted">RAG 已就绪，但该项目没有可索引的脱敏会议版本。</small><small v-else class="muted">RAG 已就绪：{{ ragIndexStatus.eligibleVersionCount }} 个脱敏会议版本可同步。</small></div><div v-if="experimentProjectId" class="metric-grid"><article class="metric-card"><div class="metric-label">运行次数 <TestTube2 :size="16" /></div><div class="metric-number">{{ experimentRunCount }}</div><small>所选项目的全部模式</small></article><article class="metric-card"><div class="metric-label">模式数量 <BarChart3 :size="16" /></div><div class="metric-number">{{ experimentRows.length }}</div><small>零运行模式也会保留</small></article></div><p v-if="experimentNotice" class="meeting-notice muted">{{ experimentNotice }}</p><div v-if="experimentProjectId" class="table-wrap"><table><thead><tr><th>模式</th><th>运行</th><th>待审核</th><th>失败</th><th>通过</th><th>驳回</th><th>平均耗时</th><th>模型调用次数</th></tr></thead><tbody><tr v-for="summary in experimentRows" :key="summary.mode"><td><strong>{{ summary.label }}</strong><small v-if="summary.mode === 'rag'">检索未配置时为无检索基线</small></td><td>{{ summary.runCount }}</td><td>{{ summary.pendingCount }}</td><td>{{ summary.failedCount }}</td><td>{{ summary.approvedCount }}</td><td>{{ summary.rejectedCount }}</td><td>{{ summary.averageDurationMs }} ms</td><td>{{ summary.totalModelCalls }}</td></tr></tbody></table></div><div v-else class="empty-cell">请选择项目以查看实验汇总。</div><div v-if="experimentLoading" class="empty-cell">正在加载实验汇总。</div></article></section>
 
         <section v-else-if="currentPage === 'calendar'" class="page-section"><div class="calendar-toolbar"><button class="icon-button" title="上个月" @click="selectedCalendarMonth = shiftCalendarMonth(selectedCalendarMonth, -1)"><ArrowRight :size="16" class="rotate-180" /></button><div class="calendar-date"><strong>团队日历</strong><span>{{ selectedCalendarLabel }}</span></div><button class="icon-button" title="下个月" @click="selectedCalendarMonth = shiftCalendarMonth(selectedCalendarMonth, 1)"><ArrowRight :size="16" /></button><button class="secondary-button" @click="selectedCalendarMonth = `${localIsoDate(new Date()).slice(0, 7)}-01`">今天</button></div><article class="panel calendar-panel"><div class="calendar-panel-head"><div><p class="eyebrow">MONTHLY SCHEDULE</p><h3>{{ selectedCalendarLabel }}</h3></div><span class="tag gray">任务截止日与会议创建日</span></div><div class="calendar-grid"><div v-for="weekday in ['一', '二', '三', '四', '五', '六', '日']" :key="weekday" class="calendar-weekday">周{{ weekday }}</div><button v-for="day in calendarDays" :key="day.date" class="calendar-day" :class="{ muted: !day.inMonth, today: day.date === localIsoDate(new Date()), 'has-tasks': taskEventsForCalendarDate(data.calendarEvents, day.date).length > 0 }" @click="openCalendarDay(day.date)"><span class="calendar-day-number">{{ Number(day.date.slice(-2)) }}<i v-if="taskEventsForCalendarDate(data.calendarEvents, day.date).length" class="calendar-task-dot"></i></span><span class="calendar-day-events"><span v-for="event in visibleEventsForDay(day.date)" :key="`${event.type}-${event.id}`" class="calendar-event" :class="event.type === 'meeting' ? 'meeting-event' : calendarTagClass(event)" :title="`${event.title} · ${event.project}`">{{ event.title }}</span><span v-if="calendarEventsForDay(day.date).length > 3" class="calendar-more">还有 {{ calendarEventsForDay(day.date).length - 3 }} 条</span></span></button></div></article></section>
 

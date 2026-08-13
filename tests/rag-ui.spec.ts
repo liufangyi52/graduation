@@ -18,9 +18,22 @@ it('sends a manager RAG index sync request with the session token', async () => 
   )
 })
 
+it('requests the project-scoped RAG readiness status with the session token', async () => {
+  const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ configured: false, ready: false, eligibleVersionCount: 0 }), { status: 200 }))
+
+  await createMeetingService('token').ragIndexStatus('project-1')
+
+  expect(fetchMock).toHaveBeenCalledWith(
+    expect.stringContaining('/projects/project-1/rag-index/status'),
+    expect.objectContaining({ headers: expect.objectContaining({ Authorization: 'Bearer token' }) }),
+  )
+})
+
 it('keeps index controls manager-scoped in the existing experiments view', () => {
   expect(appSource).toContain("currentPage === 'experiments' && canManageBusiness")
   expect(appSource).toContain('syncRagIndex')
+  expect(appSource).toContain('ragIndexStatus')
+  expect(appSource).toContain('ragIndexReady')
   expect(appSource).toContain('@click="syncRagIndex"')
 })
 
@@ -33,11 +46,12 @@ it('renders only safe retrieval source identifiers', () => {
   expect(reviewSource).not.toContain('source.text')
 })
 
-it('preserves completed retrieval metadata returned by the API', async () => {
+it('preserves only whitelisted completed retrieval metadata returned by the API', async () => {
   vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify([{
     id: 'analysis-1', meeting_id: 'meeting-1', status: 'pending', mode: 'rag', execution_metadata: {
       retrievalStatus: 'completed', retrievalDurationMs: 12, retrievalHitCount: 1,
       retrievalSources: [{ meetingId: 'm-1', versionId: 'v-1', chunkIndex: 2, score: 0.91 }],
+      text: 'desensitized chunk must not reach the UI', prompt: 'do not expose', rawError: 'do not expose', unknown: 'do not expose',
     },
   }]), { status: 200 }))
 
@@ -48,4 +62,25 @@ it('preserves completed retrieval metadata returned by the API', async () => {
     retrievalStatus: 'completed', retrievalDurationMs: 12, retrievalHitCount: 1,
     retrievalSources: [{ meetingId: 'm-1', versionId: 'v-1', chunkIndex: 2, score: 0.91 }],
   })
+  expect(service.state.analyses[0].executionMetadata).not.toHaveProperty('text')
+  expect(service.state.analyses[0].executionMetadata).not.toHaveProperty('prompt')
+  expect(service.state.analyses[0].executionMetadata).not.toHaveProperty('rawError')
+  expect(service.state.analyses[0].executionMetadata).not.toHaveProperty('unknown')
+})
+
+it('removes unsafe fields from individual retrieval sources and bounds plans', async () => {
+  vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify([{
+    id: 'analysis-1', meeting_id: 'meeting-1', status: 'pending', execution_metadata: JSON.stringify({
+      mode: 'agent', modelCallCount: 2, retrievalEnabled: true, retrievalStatus: 'completed', plan: 'p'.repeat(2100),
+      retrievalSources: [{ meetingId: 'm-1', versionId: 'v-1', chunkIndex: 2, score: 0.91, text: 'hidden', prompt: 'hidden' }],
+    }),
+  }]), { status: 200 }))
+
+  const service = createMeetingService('token')
+  await service.load()
+
+  const metadata = service.state.analyses[0].executionMetadata!
+  expect(metadata).toMatchObject({ mode: 'agent', modelCallCount: 2, retrievalEnabled: true, retrievalStatus: 'completed' })
+  expect(metadata.plan).toHaveLength(2000)
+  expect(metadata.retrievalSources).toEqual([{ meetingId: 'm-1', versionId: 'v-1', chunkIndex: 2, score: 0.91 }])
 })

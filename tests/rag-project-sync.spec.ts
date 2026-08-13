@@ -9,7 +9,7 @@ const member = { id: 'member-1', role: 'member' as const, name: 'Member', email:
 afterEach(() => vi.restoreAllMocks())
 
 it('synchronizes only current desensitized versions for the project manager', async () => {
-  const rag = { syncVersion: vi.fn().mockResolvedValueOnce({ indexedChunks: 2 }).mockResolvedValueOnce({ indexedChunks: 3 }) }
+  const rag = { isConfigured: vi.fn().mockReturnValue(true), syncVersion: vi.fn().mockResolvedValueOnce({ indexedChunks: 2 }).mockResolvedValueOnce({ indexedChunks: 3 }) }
   const cache = { invalidateBusinessReads: vi.fn() }
   vi.spyOn(pool, 'query')
     .mockResolvedValueOnce([[{ owner_id: 'manager-1' }]] as any)
@@ -41,5 +41,24 @@ it('rejects another manager and members before reading meeting versions', async 
   await expect(service.syncProjectRagIndex(otherManager, 'project-1')).rejects.toThrow('You do not manage this project')
   await expect(service.syncProjectRagIndex(member, 'project-1')).rejects.toThrow('Only managers can perform this action')
   expect(query).toHaveBeenCalledTimes(1)
+  expect(rag.syncVersion).not.toHaveBeenCalled()
+})
+
+it('reports safe configured, readiness, and eligible-version status to the project manager', async () => {
+  const rag = { isConfigured: vi.fn().mockReturnValue(true), health: vi.fn().mockResolvedValue(true) }
+  vi.spyOn(pool, 'query')
+    .mockResolvedValueOnce([[{ owner_id: 'manager-1' }]] as any)
+    .mockResolvedValueOnce([[{ eligible_version_count: 0 }]] as any)
+  const service = new AppService({} as any, {} as any, undefined, rag as any)
+
+  await expect(service.ragIndexStatus(manager, 'project-1')).resolves.toEqual({ configured: true, ready: true, eligibleVersionCount: 0 })
+})
+
+it('blocks RAG synchronization when dependencies are not configured', async () => {
+  const rag = { isConfigured: vi.fn().mockReturnValue(false), syncVersion: vi.fn() }
+  vi.spyOn(pool, 'query').mockResolvedValueOnce([[{ owner_id: 'manager-1' }]] as any)
+  const service = new AppService({} as any, {} as any, undefined, rag as any)
+
+  await expect(service.syncProjectRagIndex(manager, 'project-1')).rejects.toThrow('RAG index is not configured')
   expect(rag.syncVersion).not.toHaveBeenCalled()
 })

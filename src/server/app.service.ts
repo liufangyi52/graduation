@@ -957,7 +957,7 @@ export class AppService {
 
   async syncProjectRagIndex(user: SessionUser, projectId: string): Promise<{ indexedChunks: number }> {
     await this.assertProjectManager(user, projectId)
-    if (!this.ragIndex) throw new BadRequestException('RAG index service is unavailable')
+    if (!this.ragIndex?.isConfigured()) throw new BadRequestException('RAG index is not configured')
     const [rows] = await pool.query<any[]>(`SELECT m.project_id,m.id meeting_id,v.id version_id,v.desensitized_content
       FROM meetings m JOIN projects p ON p.id=m.project_id JOIN meeting_versions v ON v.id=m.current_version_id
       WHERE m.project_id=? AND p.deleted_at IS NULL ORDER BY m.created_at ASC`, [projectId])
@@ -974,6 +974,16 @@ export class AppService {
     await this.audit(user.id, 'project.rag_index_synced', 'project', projectId, { indexedChunks })
     await this.invalidateBusinessReads()
     return { indexedChunks }
+  }
+
+  async ragIndexStatus(user: SessionUser, projectId: string): Promise<{ configured: boolean; ready: boolean; eligibleVersionCount: number }> {
+    await this.assertProjectManager(user, projectId)
+    const configured = Boolean(this.ragIndex?.isConfigured())
+    const ready = configured && Boolean(await this.ragIndex?.health())
+    const [rows] = await pool.query<any[]>(`SELECT COUNT(*) eligible_version_count FROM meetings m
+      JOIN projects p ON p.id=m.project_id JOIN meeting_versions v ON v.id=m.current_version_id
+      WHERE m.project_id=? AND p.deleted_at IS NULL AND TRIM(v.desensitized_content) <> ''`, [projectId])
+    return { configured, ready, eligibleVersionCount: Number(rows[0]?.eligible_version_count ?? 0) }
   }
 
   async experimentSummary(user: SessionUser, projectId: string) {
