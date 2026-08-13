@@ -7,6 +7,15 @@ const readmeSource = readFileSync(new URL('../README.md', import.meta.url), 'utf
 
 afterEach(() => vi.restoreAllMocks())
 
+it('documents Qdrant-backed RAG operations and baseline semantics', () => {
+  expect(readmeSource).toContain('docker compose up -d qdrant')
+  expect(readmeSource).toContain('Qdrant')
+  expect(readmeSource).toContain('SiliconFlow')
+  expect(readmeSource).toContain('Qwen/Qwen3-Embedding-4B')
+  expect(readmeSource).toContain('`retrievalStatus=not_configured`')
+  expect(readmeSource).toContain('脱敏')
+})
+
 it('requests the selected project experiment summary', async () => {
   const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({}), { status: 200 }))
 

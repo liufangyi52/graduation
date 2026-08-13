@@ -4,10 +4,11 @@
 
 ## 本地启动
 
-1. 安装 Node.js 20+ 与 MySQL 8+，复制 `.env.example` 为 `.env` 并填写数据库密码、JWT 密钥和 DeepSeek Key。
+1. 安装 Node.js 20+、MySQL 8+ 与 Docker Desktop，复制 `.env.example` 为 `.env` 并填写数据库密码、JWT 密钥和 DeepSeek Key。
 2. 安装依赖：`npm ci`
-3. 启动 API：`npm run server`
-4. 另开终端启动前端：`npm run dev`
+3. 需要真实 RAG 时启动本地 Qdrant：`docker compose up -d qdrant`。健康检查应在 `http://127.0.0.1:6333/healthz` 返回成功；索引数据保存在 Docker 命名卷中。
+4. 启动 API：`npm run server`
+5. 另开终端启动前端：`npm run dev`
 
 首次运行会自动执行幂等迁移。生产环境必须使用随机 JWT 密钥和独立数据库账号，不要提交 `.env`。
 
@@ -31,4 +32,10 @@
 
 项目经理可在“实验中心”按项目查看四种已持久化的分析运行：`manual` 表示人工审核基线，`llm` 表示单次模型提取，`rag` 表示当前无检索 RAG 基线，`agent` 表示带计划的智能体运行。每个模式均显示运行数、待审核数、失败数、通过数、驳回数、平均耗时和模型调用总次数；从未运行的模式也显示为零，便于横向比较。
 
-当前尚未实现真实检索，因此 RAG 运行统一记录 `retrievalStatus=not_configured` 并按无检索基线执行；该状态不等同于失败。实验汇总仅聚合已有分析记录，不引入向量数据库、任务队列或新的仪表盘。
+## 真实 RAG 与 Qdrant
+
+真实 RAG 使用 Qdrant 作为专用向量数据库，Embedding 通过 SiliconFlow OpenAI 兼容接口 `https://api.siliconflow.cn/v1/embeddings` 调用 `Qwen/Qwen3-Embedding-4B`（2560 维）。在 `.env` 中配置 `SILICONFLOW_API_KEY`、`SILICONFLOW_BASE_URL`、`EMBEDDING_MODEL` 与 `QDRANT_URL`；这些密钥不得提交、输出到日志或写入实验记录。
+
+只会将会议版本的脱敏文本切分并索引。Qdrant payload 仅包含项目、会议、版本、分块、内容哈希和脱敏片段，绝不包含会议原文。项目经理可在实验中心选择项目后执行“同步 RAG 索引”；RAG 分析检索同项目的历史版本并默认排除待分析的当前版本，审核页只展示会议、版本、分块编号和相似度，不展示检索正文。
+
+缺少 SiliconFlow 或 Qdrant 配置时，`rag` 仍按无检索基线运行并记录 `retrievalStatus=not_configured`，这不是失败。配置存在但 Embedding 或 Qdrant 调用失败时，RAG 分析会标记为失败，且不会降级伪装成已检索；成功检索会记录 `retrievalStatus=completed`、检索耗时、命中数和安全来源标识。

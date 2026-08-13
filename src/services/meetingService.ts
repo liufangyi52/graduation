@@ -2,7 +2,21 @@ import { reactive } from 'vue'
 
 export interface MeetingRecord { id: string; projectId: string; title: string; content: string; createdAt: string }
 export type AnalysisMode = 'manual' | 'llm' | 'rag' | 'agent'
-export interface AnalysisExecutionMetadata { retrievalStatus?: string; plan?: string; [key: string]: unknown }
+export interface RetrievalSource {
+  meetingId: string
+  versionId: string
+  chunkIndex: number
+  score: number
+}
+
+export interface AnalysisExecutionMetadata {
+  retrievalStatus?: 'completed' | 'failed' | 'not_applicable' | 'not_configured'
+  retrievalDurationMs?: number
+  retrievalHitCount?: number
+  retrievalSources?: RetrievalSource[]
+  plan?: string
+  [key: string]: unknown
+}
 export interface AnalysisRecord { id: string; meetingId: string; title: string; status: string; result: any; createdAt: string; mode: AnalysisMode; executionMetadata: AnalysisExecutionMetadata | null; durationMs: number; modelCallCount: number }
 export interface ExperimentSummaryMetric { runCount: number; pendingCount: number; failedCount: number; approvedCount: number; rejectedCount: number; totalDurationMs: number; averageDurationMs: number; totalModelCalls: number }
 export type ExperimentSummary = Record<AnalysisMode, ExperimentSummaryMetric>
@@ -60,5 +74,6 @@ export function createMeetingService(token: string) {
     async saveReviewDraft(analysisId: string, draft: ReviewDraft) { return request<ReviewDraft>(`/analyses/${analysisId}/draft`, { method: 'PUT', body: JSON.stringify(draft) }) },
     async reanalyze(id: string, mode: AnalysisMode = 'llm') { return request<any>(`/analyses/${id}/reanalyze`, { method: 'POST', body: JSON.stringify({ mode }) }) },
     async experimentSummary(projectId: string) { return request<ExperimentSummary>(`/projects/${projectId}/experiment-summary`) },
+    async syncRagIndex(projectId: string) { return request<{ indexedChunks: number }>(`/projects/${projectId}/rag-index/sync`, { method: 'POST' }) },
   }
 }
