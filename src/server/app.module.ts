@@ -6,6 +6,7 @@ import { RedisCacheService } from './redis-cache.service'
 import { AnalysisRunner } from './analysis-runner'
 import { SiliconFlowEmbeddingProvider } from './embedding-provider'
 import { QdrantVectorStore } from './vector-store'
+import { RagIndexService } from './rag-index.service'
 
-@Module({ controllers: [AppController], providers: [AppService, DeepSeekService, RedisCacheService, AnalysisRunner, SiliconFlowEmbeddingProvider, QdrantVectorStore] })
+@Module({ controllers: [AppController], providers: [AppService, DeepSeekService, RedisCacheService, AnalysisRunner, SiliconFlowEmbeddingProvider, QdrantVectorStore, RagIndexService] })
 export class AppModule {}
