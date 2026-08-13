@@ -19,7 +19,7 @@ import { calendarMonthDays, eventsForCalendarDate, formatCalendarDate, formatCal
 import { averageTaskProgress } from './utils/progress'
 import { selectDeadlineWatchTasks } from './utils/tasks'
 import { analysisStatusLabel, priorityLabel, projectRoleLabel, projectStatusLabel, riskLevelLabel, riskStatusLabel, systemRoleLabel, taskStatusLabel } from './utils/labels'
-import { createRagIndexRequestGuard } from './services/ragIndexRequestGuard'
+import { createRagExperimentController } from './services/ragExperimentController'
 
 const props = defineProps<{ user: UserAccount; token: string }>()
 const emit = defineEmits<{ logout: [] }>()
@@ -30,7 +30,7 @@ const service = createWorkspaceService(props.token)
 const data = service.state
 const auth = createAuthService()
 const meetings = createMeetingService(props.token)
-const ragIndexRequestGuard = createRagIndexRequestGuard()
+const ragExperiments = createRagExperimentController(meetings)
 const isAuditor = computed(() => props.user.role === 'auditor')
 if (props.user.role === 'auditor') {
   void service.loadNotifications().catch(() => flash('通知加载失败'))
@@ -62,12 +62,12 @@ const meetingTitle = ref('')
 const meetingContent = ref('')
 const meetingAnalysisMode = ref<AnalysisMode>('llm')
 const experimentProjectId = ref('')
-const experimentSummary = ref<ExperimentSummary | null>(null)
-const ragIndexStatus = ref<RagIndexStatus | null>(null)
-const ragIndexStatusLoading = ref(false)
-const experimentLoading = ref(false)
-const ragIndexSyncing = ref(false)
-const experimentNotice = ref('')
+const experimentSummary = computed(() => ragExperiments.state.summary)
+const ragIndexStatus = computed(() => ragExperiments.state.status)
+const ragIndexStatusLoading = computed(() => ragExperiments.state.statusLoading)
+const experimentLoading = computed(() => ragExperiments.state.summaryLoading)
+const ragIndexSyncing = computed(() => ragExperiments.state.syncing)
+const experimentNotice = computed(() => ragExperiments.state.notice)
 const meetingNotice = ref('')
 const meetingFile = ref<File | null>(null)
 const meetingVersions = ref<MeetingVersionSummary[]>([])
@@ -224,66 +224,16 @@ const experimentModes: Array<{ mode: AnalysisMode; label: string }> = [
 const emptyExperimentMetric = (): ExperimentSummaryMetric => ({ runCount: 0, pendingCount: 0, failedCount: 0, approvedCount: 0, rejectedCount: 0, totalDurationMs: 0, averageDurationMs: 0, totalModelCalls: 0 })
 const experimentRows = computed(() => experimentModes.map(({ mode, label }) => ({ mode, label, ...(experimentSummary.value?.[mode] ?? emptyExperimentMetric()) })))
 const experimentRunCount = computed(() => experimentRows.value.reduce((total, item) => total + item.runCount, 0))
-const ragIndexReady = computed(() => Boolean(!ragIndexStatusLoading.value && ragIndexStatus.value?.configured && ragIndexStatus.value.ready))
-
-async function loadRagIndexStatus(projectId: string) {
-  const request = ragIndexRequestGuard.issue('status', projectId)
-  ragIndexStatus.value = null
-  ragIndexStatusLoading.value = true
-  try {
-    const status = await meetings.ragIndexStatus(projectId)
-    if (experimentProjectId.value !== projectId || !ragIndexRequestGuard.isCurrent(request)) return
-    ragIndexStatus.value = status
-  } catch {
-    if (experimentProjectId.value !== projectId || !ragIndexRequestGuard.isCurrent(request)) return
-    ragIndexStatus.value = null
-  } finally {
-    if (experimentProjectId.value === projectId && ragIndexRequestGuard.isCurrent(request)) ragIndexStatusLoading.value = false
-  }
-}
+const ragIndexReady = computed(() => ragExperiments.isReady())
 
 async function loadExperimentSummary() {
   if (!canManageBusiness.value) return
-  if (!experimentProjectId.value) {
-    ragIndexRequestGuard.select('')
-    ragIndexStatus.value = null
-    ragIndexStatusLoading.value = false
-    ragIndexSyncing.value = false
-    return
-  }
-  const projectId = experimentProjectId.value
-  ragIndexRequestGuard.select(projectId)
-  const request = ragIndexRequestGuard.issue('summary', projectId)
-  experimentLoading.value = true
-  ragIndexSyncing.value = false
-  experimentNotice.value = ''
-  void loadRagIndexStatus(projectId)
-  try {
-    const summary = await meetings.experimentSummary(projectId)
-    if (experimentProjectId.value !== projectId || !ragIndexRequestGuard.isCurrent(request)) return
-    experimentSummary.value = summary
-  } catch (reason) {
-    if (experimentProjectId.value !== projectId || !ragIndexRequestGuard.isCurrent(request)) return
-    experimentSummary.value = null
-    experimentNotice.value = reason instanceof Error ? reason.message : '实验汇总加载失败'
-  } finally { if (experimentProjectId.value === projectId && ragIndexRequestGuard.isCurrent(request)) experimentLoading.value = false }
+  await ragExperiments.loadSelectedProject(experimentProjectId.value)
 }
 
 async function syncRagIndex() {
   if (!canManageBusiness.value || !experimentProjectId.value || !ragIndexReady.value) return
-  const projectId = experimentProjectId.value
-  const request = ragIndexRequestGuard.issue('sync', projectId)
-  ragIndexSyncing.value = true
-  experimentNotice.value = ''
-  try {
-    const result = await meetings.syncRagIndex(projectId)
-    if (experimentProjectId.value !== projectId || !ragIndexRequestGuard.isCurrent(request)) return
-    experimentNotice.value = `RAG 索引同步完成：${result.indexedChunks} 个脱敏分块`
-    await loadRagIndexStatus(projectId)
-  } catch (reason) {
-    if (experimentProjectId.value !== projectId || !ragIndexRequestGuard.isCurrent(request)) return
-    experimentNotice.value = reason instanceof Error ? reason.message : 'RAG 索引同步失败'
-  } finally { if (experimentProjectId.value === projectId && ragIndexRequestGuard.isCurrent(request)) ragIndexSyncing.value = false }
+  await ragExperiments.sync()
 }
 
 watch(() => route.path, (path) => {

@@ -38,11 +38,9 @@ it('keeps index controls manager-scoped in the existing experiments view', () =>
 })
 
 it('clears stale RAG status during project changes and blocks sync until readiness is confirmed', () => {
-  expect(appSource).toContain('async function loadRagIndexStatus(projectId: string)')
-  expect(appSource).toContain('ragIndexStatus.value = null')
-  expect(appSource).toContain('ragIndexStatusLoading.value = true')
-  expect(appSource).toContain('!ragIndexRequestGuard.isCurrent(request)')
-  expect(appSource).toContain('!ragIndexStatusLoading.value && ragIndexStatus.value?.configured')
+  expect(appSource).toContain('createRagExperimentController(meetings)')
+  expect(appSource).toContain('ragExperiments.loadSelectedProject(experimentProjectId.value)')
+  expect(appSource).toContain('ragExperiments.isReady()')
   expect(appSource).toContain(':disabled="ragIndexSyncing || !ragIndexReady"')
 })
 
