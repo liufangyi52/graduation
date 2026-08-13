@@ -1,5 +1,5 @@
 import { expect, it, vi } from 'vitest'
-import { AnalysisRunner } from '../src/server/analysis-runner'
+import { AnalysisExecutionError, AnalysisRunner } from '../src/server/analysis-runner'
 import type { MeetingAnalysis } from '../src/server/deepseek.service'
 
 const providerResult: MeetingAnalysis = {
@@ -93,4 +93,14 @@ it('plans then extracts for agent mode', async () => {
   expect(provider.plan).toHaveBeenCalledWith('Standup', '[PHONE]')
   expect(provider.analyzeWithPlan).toHaveBeenCalledOnce()
   expect(provider.analyzeWithPlan).toHaveBeenCalledWith('Standup', '[PHONE]', 'Inspect actions and risks')
+})
+
+it('reports both attempted calls when agent extraction fails after planning', async () => {
+  const provider = createProvider()
+  provider.analyzeWithPlan.mockRejectedValueOnce(new Error('Extraction failed'))
+  const runner = new AnalysisRunner(provider)
+
+  await expect(runner.run({ mode: 'agent', title: 'Standup', desensitizedContent: '[PHONE]' })).rejects.toMatchObject({
+    metadata: { mode: 'agent', modelCallCount: 2, retrievalStatus: 'not_applicable' },
+  })
 })

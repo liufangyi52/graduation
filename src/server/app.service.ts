@@ -8,7 +8,7 @@ import { DeepSeekService, normalizeAnalysis, type MeetingAnalysis } from './deep
 import { applyDesensitization, type DesensitizationEntry } from './desensitization'
 import { buildProjectAnalytics } from '../utils/projectAnalytics'
 import { RedisCacheService } from './redis-cache.service'
-import { AnalysisRunner, type AnalysisExecutionMetadata, type AnalysisMode } from './analysis-runner'
+import { AnalysisExecutionError, AnalysisRunner, type AnalysisExecutionMetadata, type AnalysisMode } from './analysis-runner'
 
 type Role = 'manager' | 'member' | 'admin' | 'auditor'
 type SessionUser = { id: string; role: Role; name: string; email: string; authVersion?: number }
@@ -495,6 +495,26 @@ export class AppService {
     })
   }
 
+  private persistedExecutionMetadata(metadata: AnalysisExecutionMetadata) {
+    return {
+      mode: metadata.mode,
+      model: metadata.model,
+      modelCallCount: metadata.modelCallCount,
+      retrievalEnabled: metadata.retrievalEnabled,
+      retrievalStatus: metadata.retrievalStatus,
+    }
+  }
+
+  private failedExecutionMetadata(mode: AnalysisMode, error: unknown) {
+    if (error instanceof AnalysisExecutionError) return this.persistedExecutionMetadata(error.metadata)
+    return { mode, model: mode === 'manual' ? null : process.env.DEEPSEEK_MODEL ?? 'deepseek-chat', modelCallCount: 0, retrievalEnabled: false, retrievalStatus: mode === 'rag' ? 'not_configured' as const : 'not_applicable' as const }
+  }
+
+  private async afterExecutionPersisted(actorId: string, action: string, analysisId: string, metadata: AnalysisExecutionMetadata, durationMs: number) {
+    try { await this.auditExecution(actorId, action, analysisId, metadata, durationMs) } catch {}
+    try { await this.invalidateBusinessReads() } catch {}
+  }
+
   private async invalidateBusinessReads() {
     await this.cache.invalidateBusinessReads()
   }
@@ -782,20 +802,21 @@ export class AppService {
     const analysisId = randomUUID()
     const startedAt = new Date()
     await pool.execute('INSERT INTO ai_analyses (id,meeting_id,requested_by,status,model,mode,started_at,model_call_count) VALUES (?,?,?,?,?,?,?,?)', [analysisId, meetingId, user.id, 'pending', process.env.DEEPSEEK_MODEL ?? 'deepseek-chat', mode, startedAt, 0])
+    let execution: { result: MeetingAnalysis; metadata: AnalysisExecutionMetadata }
+    let durationMs: number
     try {
-      const execution = await this.analysisRunner.run({ mode, title: rows[0].title, desensitizedContent: rows[0].desensitized_content })
-      const durationMs = Date.now() - startedAt.getTime()
-      await pool.execute('UPDATE ai_analyses SET result_json=?,execution_metadata=?,finished_at=CURRENT_TIMESTAMP,duration_ms=?,model_call_count=? WHERE id=?', [JSON.stringify(execution.result), JSON.stringify(execution.metadata), durationMs, execution.metadata.modelCallCount, analysisId])
-      await this.auditExecution(user.id, 'meeting.analyzed', analysisId, execution.metadata, durationMs)
-      await this.invalidateBusinessReads()
-      return { id: analysisId, meetingId, status: 'pending', mode, result: execution.result }
+      execution = await this.analysisRunner.run({ mode, title: rows[0].title, desensitizedContent: rows[0].desensitized_content })
+      durationMs = Date.now() - startedAt.getTime()
+      await pool.execute('UPDATE ai_analyses SET result_json=?,execution_metadata=?,finished_at=CURRENT_TIMESTAMP,duration_ms=?,model_call_count=? WHERE id=?', [JSON.stringify(execution.result), JSON.stringify(this.persistedExecutionMetadata(execution.metadata)), durationMs, execution.metadata.modelCallCount, analysisId])
     } catch (reason) {
       const durationMs = Date.now() - startedAt.getTime()
-      const metadata = { mode, model: mode === 'manual' ? null : process.env.DEEPSEEK_MODEL ?? 'deepseek-chat', modelCallCount: 0, retrievalEnabled: false, retrievalStatus: mode === 'rag' ? 'not_configured' : 'not_applicable' }
-      await pool.execute('UPDATE ai_analyses SET status="failed",error_message=?,execution_metadata=?,finished_at=CURRENT_TIMESTAMP,duration_ms=? WHERE id=?', ['Analysis execution failed', JSON.stringify(metadata), durationMs, analysisId])
-      await this.audit(user.id, 'meeting.analysis_failed', 'analysis', analysisId, { mode, modelCallCount: 0, durationMs, retrievalStatus: mode === 'rag' ? 'not_configured' : 'not_applicable' })
+      const metadata = this.failedExecutionMetadata(mode, reason)
+      await pool.execute('UPDATE ai_analyses SET status="failed",error_message=?,execution_metadata=?,finished_at=CURRENT_TIMESTAMP,duration_ms=?,model_call_count=? WHERE id=?', ['Analysis execution failed', JSON.stringify(metadata), durationMs, metadata.modelCallCount, analysisId])
+      try { await this.audit(user.id, 'meeting.analysis_failed', 'analysis', analysisId, { mode: metadata.mode, modelCallCount: metadata.modelCallCount, durationMs, retrievalStatus: metadata.retrievalStatus }) } catch {}
       throw reason
     }
+    await this.afterExecutionPersisted(user.id, 'meeting.analyzed', analysisId, execution.metadata, durationMs)
+    return { id: analysisId, meetingId, status: 'pending', mode, result: execution.result }
   }
 
   async listAnalyses(user: SessionUser) {
@@ -905,20 +926,21 @@ export class AppService {
     const id = randomUUID()
     const startedAt = new Date()
     await pool.execute('INSERT INTO ai_analyses (id,meeting_id,requested_by,status,model,mode,reanalysis_of_id,started_at,model_call_count) VALUES (?,?,?,?,?,?,?,?,?)', [id, source.meeting_id, user.id, 'pending', process.env.DEEPSEEK_MODEL ?? 'deepseek-chat', mode, analysisId, startedAt, 0])
+    let execution: { result: MeetingAnalysis; metadata: AnalysisExecutionMetadata }
+    let durationMs: number
     try {
-      const execution = await this.analysisRunner.run({ mode, title: source.title, desensitizedContent: source.desensitized_content })
-      const durationMs = Date.now() - startedAt.getTime()
-      await pool.execute('UPDATE ai_analyses SET result_json=?,execution_metadata=?,finished_at=CURRENT_TIMESTAMP,duration_ms=?,model_call_count=? WHERE id=?', [JSON.stringify(execution.result), JSON.stringify(execution.metadata), durationMs, execution.metadata.modelCallCount, id])
-      await this.auditExecution(user.id, 'analysis.reanalyzed', id, execution.metadata, durationMs)
-      await this.invalidateBusinessReads()
-      return { id, meetingId: source.meeting_id, status: 'pending', mode, reanalysisOfId: analysisId, result: execution.result }
+      execution = await this.analysisRunner.run({ mode, title: source.title, desensitizedContent: source.desensitized_content })
+      durationMs = Date.now() - startedAt.getTime()
+      await pool.execute('UPDATE ai_analyses SET result_json=?,execution_metadata=?,finished_at=CURRENT_TIMESTAMP,duration_ms=?,model_call_count=? WHERE id=?', [JSON.stringify(execution.result), JSON.stringify(this.persistedExecutionMetadata(execution.metadata)), durationMs, execution.metadata.modelCallCount, id])
     } catch (error) {
       const durationMs = Date.now() - startedAt.getTime()
-      const metadata = { mode, model: mode === 'manual' ? null : process.env.DEEPSEEK_MODEL ?? 'deepseek-chat', modelCallCount: 0, retrievalEnabled: false, retrievalStatus: mode === 'rag' ? 'not_configured' : 'not_applicable' }
-      await pool.execute('UPDATE ai_analyses SET status="failed",error_message=?,execution_metadata=?,finished_at=CURRENT_TIMESTAMP,duration_ms=? WHERE id=?', ['Analysis execution failed', JSON.stringify(metadata), durationMs, id])
-      await this.audit(user.id, 'analysis.reanalysis_failed', 'analysis', id, { mode, modelCallCount: 0, durationMs, retrievalStatus: mode === 'rag' ? 'not_configured' : 'not_applicable' })
+      const metadata = this.failedExecutionMetadata(mode, error)
+      await pool.execute('UPDATE ai_analyses SET status="failed",error_message=?,execution_metadata=?,finished_at=CURRENT_TIMESTAMP,duration_ms=?,model_call_count=? WHERE id=?', ['Analysis execution failed', JSON.stringify(metadata), durationMs, metadata.modelCallCount, id])
+      try { await this.audit(user.id, 'analysis.reanalysis_failed', 'analysis', id, { mode: metadata.mode, modelCallCount: metadata.modelCallCount, durationMs, retrievalStatus: metadata.retrievalStatus }) } catch {}
       throw error
     }
+    await this.afterExecutionPersisted(user.id, 'analysis.reanalyzed', id, execution.metadata, durationMs)
+    return { id, meetingId: source.meeting_id, status: 'pending', mode, reanalysisOfId: analysisId, result: execution.result }
   }
 
   async experimentSummary(user: SessionUser, projectId: string) {

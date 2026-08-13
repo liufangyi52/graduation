@@ -16,6 +16,13 @@ export type AnalysisRunnerInput = { mode: AnalysisMode; title: string; desensiti
 export type AnalysisRunnerResult = { result: MeetingAnalysis; metadata: AnalysisExecutionMetadata }
 type AnalysisProvider = Pick<DeepSeekService, 'analyzeWithPlan' | 'plan'>
 
+export class AnalysisExecutionError extends Error {
+  constructor(cause: unknown, readonly metadata: AnalysisExecutionMetadata) {
+    super(cause instanceof Error ? cause.message : 'Analysis execution failed')
+    this.name = 'AnalysisExecutionError'
+  }
+}
+
 @Injectable()
 export class AnalysisRunner {
   constructor(@Inject(DeepSeekService) private readonly deepseek: AnalysisProvider) {}
@@ -28,11 +35,17 @@ export class AnalysisRunner {
       }
     }
     if (mode === 'agent') {
-      const plan = await this.deepseek.plan(title, desensitizedContent)
-      const result = await this.deepseek.analyzeWithPlan(title, desensitizedContent, plan)
+      let plan: string
+      try { plan = await this.deepseek.plan(title, desensitizedContent) }
+      catch (error) { throw new AnalysisExecutionError(error, this.metadata(mode, 1)) }
+      let result: MeetingAnalysis
+      try { result = await this.deepseek.analyzeWithPlan(title, desensitizedContent, plan) }
+      catch (error) { throw new AnalysisExecutionError(error, this.metadata(mode, 2)) }
       return { result, metadata: { ...this.metadata(mode, 2), plan } }
     }
-    const result = await this.deepseek.analyzeWithPlan(title, desensitizedContent, undefined)
+    let result: MeetingAnalysis
+    try { result = await this.deepseek.analyzeWithPlan(title, desensitizedContent, undefined) }
+    catch (error) { throw new AnalysisExecutionError(error, this.metadata(mode, 1)) }
     return { result, metadata: this.metadata(mode, 1) }
   }
 

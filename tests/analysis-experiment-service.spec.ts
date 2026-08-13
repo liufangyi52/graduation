@@ -3,6 +3,7 @@ import { expect, it, vi } from 'vitest'
 import { AppService } from '../src/server/app.service'
 import { AnalysisRequestDto } from '../src/server/dtos'
 import { pool } from '../src/server/database'
+import { AnalysisExecutionError } from '../src/server/analysis-runner'
 
 const manager = { id: 'manager-1', role: 'manager' as const, name: 'Manager', email: 'manager@example.com' }
 const result = { summary: 'Safe summary', decisions: [], tasks: [], risks: [] }
@@ -27,7 +28,7 @@ it('runs a RAG analysis from only the current desensitized content and persists 
 })
 
 it('records safe metadata and timing when a mode execution fails', async () => {
-  const runner = { run: vi.fn().mockRejectedValue(new Error('Provider unavailable')) }
+  const runner = { run: vi.fn().mockRejectedValue(new AnalysisExecutionError(new Error('Provider unavailable'), { mode: 'agent', model: 'deepseek-chat', modelCallCount: 2, retrievalEnabled: false, retrievalStatus: 'not_applicable' })) }
   vi.spyOn(pool, 'query')
     .mockResolvedValueOnce([[{ id: 'meeting-1', title: 'Standup', content: '13800138000', project_id: 'project-1', desensitized_content: '[PHONE]' }]] as any)
     .mockResolvedValueOnce([[{ owner_id: 'manager-1' }]] as any)
@@ -38,7 +39,35 @@ it('records safe metadata and timing when a mode execution fails', async () => {
   const persisted = JSON.stringify(execute.mock.calls)
   expect(persisted).not.toContain('13800138000')
   expect(persisted).not.toContain('[PHONE]')
-  expect(execute).toHaveBeenCalledWith(expect.stringContaining('status="failed"'), expect.arrayContaining(['Analysis execution failed', expect.stringContaining('not_applicable')]))
+  expect(execute).toHaveBeenCalledWith(expect.stringContaining('status="failed"'), expect.arrayContaining(['Analysis execution failed', expect.stringContaining('not_applicable'), 2]))
+})
+
+it('keeps a persisted analysis pending when audit or cache invalidation fails', async () => {
+  const runner = { run: vi.fn().mockResolvedValue({ result, metadata: { mode: 'llm', model: 'deepseek-chat', modelCallCount: 1, retrievalEnabled: false, retrievalStatus: 'not_applicable' } }) }
+  vi.spyOn(pool, 'query')
+    .mockResolvedValueOnce([[{ id: 'meeting-1', title: 'Standup', project_id: 'project-1', desensitized_content: '[PHONE]' }]] as any)
+    .mockResolvedValueOnce([[{ owner_id: 'manager-1' }]] as any)
+  const execute = vi.spyOn(pool, 'execute').mockImplementation((async (sql: string) => {
+    if (sql.includes('INSERT INTO audit_logs')) throw new Error('Audit unavailable')
+    return [] as any
+  }) as any)
+
+  await expect(new AppService({} as any, { invalidateBusinessReads: vi.fn().mockRejectedValue(new Error('Cache unavailable')) } as any, runner as any).analyzeMeeting(manager, 'meeting-1')).resolves.toMatchObject({ status: 'pending', result })
+
+  expect(execute.mock.calls.filter(([sql]) => String(sql).includes('status="failed"'))).toHaveLength(0)
+})
+
+it('does not persist an agent plan that echoes desensitized meeting content', async () => {
+  const runner = { run: vi.fn().mockResolvedValue({ result, metadata: { mode: 'agent', model: 'deepseek-chat', modelCallCount: 2, retrievalEnabled: false, retrievalStatus: 'not_applicable', plan: 'Use [PHONE] to prioritize the work' } }) }
+  vi.spyOn(pool, 'query')
+    .mockResolvedValueOnce([[{ id: 'meeting-1', title: 'Standup', project_id: 'project-1', desensitized_content: '[PHONE]' }]] as any)
+    .mockResolvedValueOnce([[{ owner_id: 'manager-1' }]] as any)
+  const execute = vi.spyOn(pool, 'execute').mockResolvedValue([] as any)
+
+  await new AppService({} as any, { invalidateBusinessReads: vi.fn() } as any, runner as any).analyzeMeeting(manager, 'meeting-1', 'agent')
+
+  expect(JSON.stringify(execute.mock.calls)).not.toContain('[PHONE]')
+  expect(JSON.stringify(execute.mock.calls)).not.toContain('Use [PHONE]')
 })
 
 it('rejects unsupported analysis modes in the request DTO', async () => {
