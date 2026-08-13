@@ -7,6 +7,7 @@
     "dev": "vite",
     "server": "tsx src/server/main.ts",
     "reset:existing-user-passwords": "tsx scripts/reset-existing-user-passwords.ts",
+    "smoke:project-core-closure": "tsx scripts/smoke-project-core-closure.ts",
     "build": "vue-tsc --noEmit --incremental false && vite build",
     "test": "vitest run"
   },

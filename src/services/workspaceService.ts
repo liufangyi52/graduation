@@ -6,7 +6,7 @@ export type RiskLevel = 'high' | 'medium' | 'low'
 
 export interface Task { id: string; title: string; description?: string; project: string; projectId?: string; owner: string; assigneeId?: string; due: string; priority: '紧急' | '高' | '中' | '低'; rawPriority?: 'low' | 'medium' | 'high' | 'urgent'; state: TaskState; progress: number; source?: 'ai-review' }
 export interface CalendarEvent { id: string; type: 'task' | 'meeting'; title: string; project: string; date: string; owner?: string; priority?: Task['priority']; state?: TaskState }
-export interface Project { id: string; name: string; code: string; owner: string; state: '进行中' | '暂停' | '已归档'; progress: number; deadline: string; members: number }
+export interface Project { id: string; name: string; code: string; description?: string; owner: string; state: '进行中' | '暂停' | '已归档'; progress: number; deadline: string; members: number }
 export interface Review { id: string; meeting: string; project: string; mode: string; confidence: number; time: string; status: 'pending' | 'approved' | 'rejected' }
 export interface Risk { id: string; title: string; task: string; level: RiskLevel; owner: string; status: '待处理' | '跟进中' | '已处理' }
 export interface MemberFeedback { id: string; taskId: string; author: string; content: string; progress: number; createdAt: string }
@@ -28,7 +28,7 @@ export function createWorkspaceService(token: string) {
     if (!response.ok) throw new Error(payload.message ?? '请求失败')
     return payload as T
   }
-  const mapProject = (item: any): Project => ({ id: item.id, name: item.name, code: item.code, owner: item.owner_name, state: statusMap[item.status as keyof typeof statusMap] ?? '进行中', progress: Number(item.progress ?? 0), deadline: item.end_date ?? '未设置', members: Number(item.members ?? 0) })
+  const mapProject = (item: any): Project => ({ id: item.id, name: item.name, code: item.code, description: item.description ?? undefined, owner: item.owner_name, state: statusMap[item.status as keyof typeof statusMap] ?? '进行中', progress: Number(item.progress ?? 0), deadline: item.end_date ?? '未设置', members: Number(item.members ?? 0) })
   const mapTask = (item: any): Task => ({ id: item.id, title: item.title, description: item.description ?? undefined, project: item.project_name, projectId: item.project_id, owner: item.assignee_name, assigneeId: item.assignee_id, due: item.due_date ?? '未设置', priority: priorityMap[item.priority as keyof typeof priorityMap] ?? '中', rawPriority: item.priority, state: taskStateMap[item.status as keyof typeof taskStateMap] ?? 'todo', progress: Number(item.progress ?? 0) })
   const mapCalendarEvent = (item: any): CalendarEvent => ({
     id: item.id,

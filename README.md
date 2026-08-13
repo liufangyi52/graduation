@@ -17,6 +17,7 @@
 - 类型检查：`npx vue-tsc --noEmit --incremental false`
 - 生产构建：`npm run build`
 - 核心闭环冒烟验收：`npx tsx scripts/smoke-core-workflow.ts`（使用当前 `.env` 的 MySQL，创建并清理随机临时数据）
+- 项目闭环验收：`npm run smoke:project-core-closure`（需要可连接的 MySQL；验证软删除恢复、自定义脱敏日志隐私、任务备注、逾期查询和驳回重分析，并仅清理本次运行生成的 UUID 数据）
 
 ## 角色边界
 
