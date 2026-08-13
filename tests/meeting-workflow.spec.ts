@@ -30,7 +30,7 @@ it('uploads a meeting file as multipart data without forcing a JSON content type
 
 it('does not include a rejection reason in the audit event', async () => {
   const manager = { id: 'manager-1', role: 'manager' as const, name: 'Manager', email: 'manager@example.com' }
-  const connection = { beginTransaction: vi.fn(), commit: vi.fn(), rollback: vi.fn(), release: vi.fn(), query: vi.fn(), execute: vi.fn() }
+  const connection = { beginTransaction: vi.fn(), commit: vi.fn(), rollback: vi.fn(), release: vi.fn(), query: vi.fn().mockResolvedValueOnce([[]]), execute: vi.fn() }
   vi.spyOn(pool, 'query')
     .mockResolvedValueOnce([[{ id: 'analysis-1', project_id: 'project-1', status: 'pending', result_json: JSON.stringify({ summary: 'x', decisions: [], tasks: [], risks: [] }) }]] as any)
     .mockResolvedValueOnce([[{ owner_id: 'manager-1' }]] as any)
@@ -47,7 +47,7 @@ it('creates a task notification for the assignee when an analysis is approved', 
   const manager = { id: 'manager-1', role: 'manager' as const, name: 'Manager', email: 'manager@example.com' }
   const connection = {
     beginTransaction: vi.fn(), commit: vi.fn(), rollback: vi.fn(), release: vi.fn(), execute: vi.fn(),
-    query: vi.fn().mockResolvedValueOnce([[{ owner_id: 'manager-1' }]]),
+    query: vi.fn().mockResolvedValueOnce([[]]).mockResolvedValueOnce([[{ owner_id: 'manager-1' }]]),
   }
   vi.spyOn(pool, 'query')
     .mockResolvedValueOnce([[{ id: 'analysis-1', project_id: 'project-1', status: 'pending', result_json: JSON.stringify({ summary: 'x', decisions: [], tasks: [{ title: 'Prepare release', priority: 'high' }], risks: [] }) }]] as any)
