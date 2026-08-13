@@ -11,20 +11,54 @@ const result = { summary: 'Safe summary', decisions: [], tasks: [], risks: [] }
 it('runs a RAG analysis from only the current desensitized content and persists safe execution data', async () => {
   const runner = { run: vi.fn().mockResolvedValue({
     result,
-    metadata: { mode: 'rag', model: 'deepseek-chat', modelCallCount: 1, retrievalEnabled: false, retrievalStatus: 'not_configured' },
+    metadata: {
+      mode: 'rag', model: 'deepseek-chat', modelCallCount: 1, retrievalEnabled: true, retrievalStatus: 'completed',
+      retrievalDurationMs: 31, retrievalHitCount: 1,
+      retrievalSources: [{ meetingId: 'history-1', versionId: 'history-version-1', chunkIndex: 3, score: 0.92 }],
+      text: 'retrieved private chunk', apiKey: 'secret-key', rawProviderError: 'raw error',
+    },
   }) }
   vi.spyOn(pool, 'query')
-    .mockResolvedValueOnce([[{ id: 'meeting-1', title: 'Standup', content: '13800138000', project_id: 'project-1', desensitized_content: '[PHONE]' }]] as any)
+    .mockResolvedValueOnce([[{ id: 'meeting-1', title: 'Standup', content: '13800138000', project_id: 'project-1', current_version_id: 'version-1', desensitized_content: '[PHONE]' }]] as any)
     .mockResolvedValueOnce([[{ owner_id: 'manager-1' }]] as any)
   const execute = vi.spyOn(pool, 'execute').mockResolvedValue([] as any)
 
   await expect(new AppService({} as any, { invalidateBusinessReads: vi.fn() } as any, runner as any).analyzeMeeting(manager, 'meeting-1', 'rag')).resolves.toMatchObject({ meetingId: 'meeting-1', status: 'pending', result })
 
-  expect(runner.run).toHaveBeenCalledWith({ mode: 'rag', title: 'Standup', desensitizedContent: '[PHONE]' })
+  expect(runner.run).toHaveBeenCalledWith({ mode: 'rag', title: 'Standup', projectId: 'project-1', meetingId: 'meeting-1', versionId: 'version-1', desensitizedContent: '[PHONE]' })
   const persisted = JSON.stringify(execute.mock.calls)
   expect(persisted).not.toContain('13800138000')
   expect(persisted).not.toContain('[PHONE]')
-  expect(execute).toHaveBeenCalledWith(expect.stringContaining('execution_metadata'), expect.arrayContaining([expect.stringContaining('not_configured'), 1]))
+  expect(persisted).not.toContain('retrieved private chunk')
+  expect(persisted).not.toContain('secret-key')
+  expect(persisted).not.toContain('raw error')
+  const metadataArguments = execute.mock.calls.find(([sql]) => String(sql).startsWith('UPDATE ai_analyses SET result_json'))?.[1] as any[]
+  expect(JSON.parse(String(metadataArguments[1]))).toEqual({
+    mode: 'rag', model: 'deepseek-chat', modelCallCount: 1, retrievalEnabled: true, retrievalStatus: 'completed',
+    retrievalDurationMs: 31, retrievalHitCount: 1,
+    retrievalSources: [{ meetingId: 'history-1', versionId: 'history-version-1', chunkIndex: 3, score: 0.92 }],
+  })
+})
+
+it('persists safe failed retrieval metadata without provider details', async () => {
+  const runner = { run: vi.fn().mockRejectedValue(new AnalysisExecutionError(new Error('RAG retrieval failed'), {
+    mode: 'rag', model: 'deepseek-chat', modelCallCount: 0, retrievalEnabled: true, retrievalStatus: 'failed', retrievalDurationMs: 19,
+  })) }
+  vi.spyOn(pool, 'query')
+    .mockResolvedValueOnce([[{ id: 'meeting-1', title: 'Standup', content: '13800138000', project_id: 'project-1', current_version_id: 'version-1', desensitized_content: '[PHONE]' }]] as any)
+    .mockResolvedValueOnce([[{ owner_id: 'manager-1' }]] as any)
+  const execute = vi.spyOn(pool, 'execute').mockResolvedValue([] as any)
+
+  await expect(new AppService({} as any, {} as any, runner as any).analyzeMeeting(manager, 'meeting-1', 'rag')).rejects.toThrow('RAG retrieval failed')
+
+  const failureArguments = execute.mock.calls.find(([sql]) => String(sql).includes('status="failed"'))?.[1] as any[]
+  expect(JSON.parse(String(failureArguments[1]))).toEqual({
+    mode: 'rag', model: 'deepseek-chat', modelCallCount: 0, retrievalEnabled: true, retrievalStatus: 'failed', retrievalDurationMs: 19,
+  })
+  const persisted = JSON.stringify(execute.mock.calls)
+  expect(persisted).not.toContain('13800138000')
+  expect(persisted).not.toContain('[PHONE]')
+  expect(persisted).not.toContain('RAG retrieval failed')
 })
 
 it('records safe metadata and timing when a mode execution fails', async () => {

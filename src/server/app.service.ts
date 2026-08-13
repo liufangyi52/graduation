@@ -9,6 +9,7 @@ import { applyDesensitization, type DesensitizationEntry } from './desensitizati
 import { buildProjectAnalytics } from '../utils/projectAnalytics'
 import { RedisCacheService } from './redis-cache.service'
 import { AnalysisExecutionError, AnalysisRunner, type AnalysisExecutionMetadata, type AnalysisMode } from './analysis-runner'
+import { RagIndexService } from './rag-index.service'
 
 type Role = 'manager' | 'member' | 'admin' | 'auditor'
 type SessionUser = { id: string; role: Role; name: string; email: string; authVersion?: number }
@@ -22,7 +23,12 @@ export function normalizeStoredAnalysis(value: unknown): MeetingAnalysis {
 
 @Injectable()
 export class AppService {
-  constructor(private readonly deepseek: DeepSeekService, private readonly cache: RedisCacheService = new RedisCacheService(), private readonly analysisRunner: AnalysisRunner = new AnalysisRunner(deepseek)) {}
+  constructor(
+    private readonly deepseek: DeepSeekService,
+    private readonly cache: RedisCacheService = new RedisCacheService(),
+    private readonly analysisRunner: AnalysisRunner = new AnalysisRunner(deepseek),
+    private readonly ragIndex?: RagIndexService,
+  ) {}
   async register(input: { role: Role; name: string; email: string; password: string }) {
     if (!canRegisterRole(input.role)) throw new ForbiddenException('Only member accounts can self-register')
     if (!['manager', 'member', 'admin', 'auditor'].includes(input.role)) throw new BadRequestException('无效角色')
@@ -502,6 +508,11 @@ export class AppService {
       modelCallCount: metadata.modelCallCount,
       retrievalEnabled: metadata.retrievalEnabled,
       retrievalStatus: metadata.retrievalStatus,
+      ...(Number.isFinite(metadata.retrievalDurationMs) ? { retrievalDurationMs: Math.max(0, Number(metadata.retrievalDurationMs)) } : {}),
+      ...(Number.isInteger(metadata.retrievalHitCount) ? { retrievalHitCount: Math.max(0, Number(metadata.retrievalHitCount)) } : {}),
+      ...(Array.isArray(metadata.retrievalSources) ? {
+        retrievalSources: metadata.retrievalSources.slice(0, 5).map(({ meetingId, versionId, chunkIndex, score }) => ({ meetingId, versionId, chunkIndex, score })),
+      } : {}),
       ...(metadata.plan ? { plan: metadata.plan.slice(0, 2000) } : {}),
     }
   }
@@ -796,7 +807,7 @@ export class AppService {
   }
 
   async analyzeMeeting(user: SessionUser, meetingId: string, mode: AnalysisMode = 'llm') {
-    const [rows] = await pool.query<any[]>('SELECT m.id,m.title,m.project_id,v.desensitized_content FROM meetings m LEFT JOIN meeting_versions v ON v.id=m.current_version_id WHERE m.id=?', [meetingId])
+    const [rows] = await pool.query<any[]>('SELECT m.id,m.title,m.project_id,m.current_version_id,v.desensitized_content FROM meetings m LEFT JOIN meeting_versions v ON v.id=m.current_version_id WHERE m.id=?', [meetingId])
     if (!rows[0]) throw new BadRequestException('Meeting does not exist')
     await this.assertProjectManager(user, rows[0].project_id)
     if (typeof rows[0].desensitized_content !== 'string') throw new BadRequestException('Current meeting version does not have desensitized content')
@@ -806,7 +817,7 @@ export class AppService {
     let execution: { result: MeetingAnalysis; metadata: AnalysisExecutionMetadata }
     let durationMs: number
     try {
-      execution = await this.analysisRunner.run({ mode, title: rows[0].title, desensitizedContent: rows[0].desensitized_content })
+      execution = await this.analysisRunner.run({ mode, title: rows[0].title, projectId: rows[0].project_id, meetingId, versionId: rows[0].current_version_id, desensitizedContent: rows[0].desensitized_content })
       durationMs = Date.now() - startedAt.getTime()
       await pool.execute('UPDATE ai_analyses SET result_json=?,execution_metadata=?,finished_at=CURRENT_TIMESTAMP,duration_ms=?,model_call_count=? WHERE id=?', [JSON.stringify(execution.result), JSON.stringify(this.persistedExecutionMetadata(execution.metadata)), durationMs, execution.metadata.modelCallCount, analysisId])
     } catch (reason) {
@@ -916,7 +927,7 @@ export class AppService {
   }
 
   async reanalyzeRejectedAnalysis(user: SessionUser, analysisId: string, mode: AnalysisMode = 'llm') {
-    const [rows] = await pool.query<any[]>(`SELECT a.id,a.status,a.meeting_id,m.title,m.project_id,v.desensitized_content
+    const [rows] = await pool.query<any[]>(`SELECT a.id,a.status,a.meeting_id,m.title,m.project_id,m.current_version_id,v.desensitized_content
       FROM ai_analyses a JOIN meetings m ON m.id=a.meeting_id JOIN projects p ON p.id=m.project_id
       LEFT JOIN meeting_versions v ON v.id=m.current_version_id WHERE a.id=? AND p.deleted_at IS NULL`, [analysisId])
     const source = rows[0]
@@ -930,7 +941,7 @@ export class AppService {
     let execution: { result: MeetingAnalysis; metadata: AnalysisExecutionMetadata }
     let durationMs: number
     try {
-      execution = await this.analysisRunner.run({ mode, title: source.title, desensitizedContent: source.desensitized_content })
+      execution = await this.analysisRunner.run({ mode, title: source.title, projectId: source.project_id, meetingId: source.meeting_id, versionId: source.current_version_id, desensitizedContent: source.desensitized_content })
       durationMs = Date.now() - startedAt.getTime()
       await pool.execute('UPDATE ai_analyses SET result_json=?,execution_metadata=?,finished_at=CURRENT_TIMESTAMP,duration_ms=?,model_call_count=? WHERE id=?', [JSON.stringify(execution.result), JSON.stringify(this.persistedExecutionMetadata(execution.metadata)), durationMs, execution.metadata.modelCallCount, id])
     } catch (error) {
@@ -942,6 +953,27 @@ export class AppService {
     }
     await this.afterExecutionPersisted(user.id, 'analysis.reanalyzed', id, execution.metadata, durationMs)
     return { id, meetingId: source.meeting_id, status: 'pending', mode, reanalysisOfId: analysisId, result: execution.result }
+  }
+
+  async syncProjectRagIndex(user: SessionUser, projectId: string): Promise<{ indexedChunks: number }> {
+    await this.assertProjectManager(user, projectId)
+    if (!this.ragIndex) throw new BadRequestException('RAG index service is unavailable')
+    const [rows] = await pool.query<any[]>(`SELECT m.project_id,m.id meeting_id,v.id version_id,v.desensitized_content
+      FROM meetings m JOIN projects p ON p.id=m.project_id JOIN meeting_versions v ON v.id=m.current_version_id
+      WHERE m.project_id=? AND p.deleted_at IS NULL ORDER BY m.created_at ASC`, [projectId])
+    let indexedChunks = 0
+    for (const row of rows) {
+      const result = await this.ragIndex.syncVersion({
+        projectId: row.project_id,
+        meetingId: row.meeting_id,
+        versionId: row.version_id,
+        desensitizedContent: String(row.desensitized_content ?? ''),
+      })
+      indexedChunks += result.indexedChunks
+    }
+    await this.audit(user.id, 'project.rag_index_synced', 'project', projectId, { indexedChunks })
+    await this.invalidateBusinessReads()
+    return { indexedChunks }
   }
 
   async experimentSummary(user: SessionUser, projectId: string) {

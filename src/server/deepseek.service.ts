@@ -39,6 +39,7 @@ export function normalizeAnalysis(input: any): MeetingAnalysis {
 }
 
 type ChatMessage = { role: 'system' | 'user'; content: string }
+const MAX_RAG_CONTEXT_LENGTH = 8000
 
 @Injectable()
 export class DeepSeekService {
@@ -46,8 +47,17 @@ export class DeepSeekService {
     return this.analyzeWithPlan(title, content)
   }
 
+  async analyzeWithContext(title: string, content: string, context?: string): Promise<MeetingAnalysis> {
+    const boundedContext = context?.trim().slice(0, MAX_RAG_CONTEXT_LENGTH)
+    return this.analyzeStructured(title, content, boundedContext ? `\nEvidence:\n${boundedContext}` : '')
+  }
+
   async analyzeWithPlan(title: string, content: string, plan?: string): Promise<MeetingAnalysis> {
     const extractionContext = plan?.trim() ? `\nPlan:\n${plan.trim()}` : ''
+    return this.analyzeStructured(title, content, extractionContext)
+  }
+
+  private async analyzeStructured(title: string, content: string, extractionContext: string): Promise<MeetingAnalysis> {
     const output = await this.requestCompletion([
       { role: 'system', content: '你是会议纪要任务抽取助手。只返回 JSON：summary 字符串、decisions 字符串数组、tasks 数组（title,description,owner_email,due_date,priority）、risks 数组（title,description,level）。priority 只能是 low、medium、high、urgent；level 只能是 low、medium、high。' },
       { role: 'user', content: `会议标题：${title}\n会议纪要：\n${content}${extractionContext}` },

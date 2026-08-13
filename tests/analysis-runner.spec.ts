@@ -1,6 +1,8 @@
-import { expect, it, vi } from 'vitest'
+import { afterEach, expect, it, vi } from 'vitest'
 import { AnalysisExecutionError, AnalysisRunner } from '../src/server/analysis-runner'
-import type { MeetingAnalysis } from '../src/server/deepseek.service'
+import { DeepSeekService, type MeetingAnalysis } from '../src/server/deepseek.service'
+
+afterEach(() => vi.unstubAllGlobals())
 
 const providerResult: MeetingAnalysis = {
   summary: 'Provider summary',
@@ -12,8 +14,18 @@ const providerResult: MeetingAnalysis = {
 function createProvider() {
   return {
     analyzeWithPlan: vi.fn().mockResolvedValue(providerResult),
+    analyzeWithContext: vi.fn().mockResolvedValue(providerResult),
     plan: vi.fn().mockResolvedValue('Inspect actions and risks'),
   }
+}
+
+const ragInput = {
+  mode: 'rag' as const,
+  title: 'Standup',
+  projectId: 'project-1',
+  meetingId: 'meeting-1',
+  versionId: 'version-1',
+  desensitizedContent: '[PHONE]',
 }
 
 it('returns a manual-review draft without calling the provider', async () => {
@@ -57,9 +69,10 @@ it('runs one structured extraction for LLM mode', async () => {
 
 it('runs one structured extraction and reports unavailable retrieval for RAG mode', async () => {
   const provider = createProvider()
-  const runner = new AnalysisRunner(provider)
+  const rag = { isConfigured: vi.fn().mockReturnValue(false), retrieve: vi.fn() }
+  const runner = new AnalysisRunner(provider, rag as any)
 
-  const execution = await runner.run({ mode: 'rag', title: 'Standup', desensitizedContent: '[PHONE]' })
+  const execution = await runner.run(ragInput)
 
   expect(execution.result).toEqual(providerResult)
   expect(execution.metadata).toEqual({
@@ -72,6 +85,95 @@ it('runs one structured extraction and reports unavailable retrieval for RAG mod
   expect(provider.analyzeWithPlan).toHaveBeenCalledOnce()
   expect(provider.analyzeWithPlan).toHaveBeenCalledWith('Standup', '[PHONE]', undefined)
   expect(provider.plan).not.toHaveBeenCalled()
+  expect(provider.analyzeWithContext).not.toHaveBeenCalled()
+  expect(rag.retrieve).not.toHaveBeenCalled()
+})
+
+it('retrieves project evidence and performs one contextual extraction for configured RAG', async () => {
+  const provider = createProvider()
+  const rag = {
+    isConfigured: vi.fn().mockReturnValue(true),
+    retrieve: vi.fn().mockResolvedValue({
+      durationMs: 37,
+      evidence: [
+        { meetingId: 'meeting-history-1', versionId: 'version-history-1', chunkIndex: 2, score: 0.91, text: '[EMAIL] release decision' },
+        { meetingId: 'meeting-history-2', versionId: 'version-history-2', chunkIndex: 0, score: 0.84, text: '[PHONE] schedule risk' },
+      ],
+    }),
+  }
+  const runner = new AnalysisRunner(provider, rag as any)
+
+  const execution = await runner.run(ragInput)
+
+  expect(rag.retrieve).toHaveBeenCalledWith({
+    projectId: 'project-1',
+    meetingId: 'meeting-1',
+    versionId: 'version-1',
+    desensitizedContent: '[PHONE]',
+  })
+  expect(provider.analyzeWithContext).toHaveBeenCalledOnce()
+  expect(provider.analyzeWithContext).toHaveBeenCalledWith('Standup', '[PHONE]', expect.stringMatching(/Source 1[\s\S]*Source 2/))
+  expect(provider.analyzeWithPlan).not.toHaveBeenCalled()
+  expect(execution).toEqual({
+    result: providerResult,
+    metadata: {
+      mode: 'rag',
+      model: 'deepseek-chat',
+      modelCallCount: 1,
+      retrievalEnabled: true,
+      retrievalStatus: 'completed',
+      retrievalDurationMs: 37,
+      retrievalHitCount: 2,
+      retrievalSources: [
+        { meetingId: 'meeting-history-1', versionId: 'version-history-1', chunkIndex: 2, score: 0.91 },
+        { meetingId: 'meeting-history-2', versionId: 'version-history-2', chunkIndex: 0, score: 0.84 },
+      ],
+    },
+  })
+  expect(JSON.stringify(execution.metadata)).not.toContain('release decision')
+  expect(JSON.stringify(execution.metadata)).not.toContain('schedule risk')
+})
+
+it('fails configured RAG safely before DeepSeek extraction when retrieval fails', async () => {
+  const provider = createProvider()
+  const rag = {
+    isConfigured: vi.fn().mockReturnValue(true),
+    retrieve: vi.fn().mockRejectedValue(new Error('qdrant private response and secret-key')),
+  }
+  const runner = new AnalysisRunner(provider, rag as any)
+
+  await expect(runner.run(ragInput)).rejects.toMatchObject({
+    message: 'RAG retrieval failed',
+    metadata: {
+      mode: 'rag',
+      modelCallCount: 0,
+      retrievalEnabled: true,
+      retrievalStatus: 'failed',
+    },
+  })
+  expect(provider.analyzeWithContext).not.toHaveBeenCalled()
+  expect(provider.analyzeWithPlan).not.toHaveBeenCalled()
+})
+
+it('labels and bounds retrieved evidence separately from an agent plan', async () => {
+  const previousKey = process.env.DEEPSEEK_API_KEY
+  process.env.DEEPSEEK_API_KEY = 'test-key'
+  const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(providerResult) } }] }), { status: 200 }))
+  vi.stubGlobal('fetch', fetchMock)
+
+  try {
+    await new DeepSeekService().analyzeWithContext('Standup', '[PHONE]', `Source 1:\n${'x'.repeat(9000)}`)
+  } finally {
+    if (previousKey === undefined) delete process.env.DEEPSEEK_API_KEY
+    else process.env.DEEPSEEK_API_KEY = previousKey
+  }
+
+  const request = fetchMock.mock.calls[0][1] as RequestInit
+  const body = JSON.parse(String(request.body))
+  const userMessage = body.messages.find((message: any) => message.role === 'user').content as string
+  expect(userMessage).toContain('\nEvidence:\nSource 1:')
+  expect(userMessage).not.toContain('\nPlan:\nRetrieved evidence:')
+  expect(userMessage).not.toContain('x'.repeat(8001))
 })
 
 it('plans then extracts for agent mode', async () => {

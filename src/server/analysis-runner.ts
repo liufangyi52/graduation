@@ -1,5 +1,6 @@
-import { Inject, Injectable } from '@nestjs/common'
+import { Inject, Injectable, Optional } from '@nestjs/common'
 import { DeepSeekService, type MeetingAnalysis } from './deepseek.service'
+import { RagIndexService, type RetrievalEvidence } from './rag-index.service'
 
 export type AnalysisMode = 'manual' | 'llm' | 'rag' | 'agent'
 
@@ -8,13 +9,24 @@ export type AnalysisExecutionMetadata = {
   model: string | null
   modelCallCount: number
   retrievalEnabled: boolean
-  retrievalStatus: 'not_applicable' | 'not_configured'
+  retrievalStatus: 'completed' | 'failed' | 'not_applicable' | 'not_configured'
+  retrievalDurationMs?: number
+  retrievalHitCount?: number
+  retrievalSources?: Array<{ meetingId: string; versionId: string; chunkIndex: number; score: number }>
   plan?: string
 }
 
-export type AnalysisRunnerInput = { mode: AnalysisMode; title: string; desensitizedContent: string }
+export type AnalysisRunnerInput = {
+  mode: AnalysisMode
+  title: string
+  projectId?: string
+  meetingId?: string
+  versionId?: string
+  desensitizedContent: string
+}
 export type AnalysisRunnerResult = { result: MeetingAnalysis; metadata: AnalysisExecutionMetadata }
-type AnalysisProvider = Pick<DeepSeekService, 'analyzeWithPlan' | 'plan'>
+type AnalysisProvider = Pick<DeepSeekService, 'analyzeWithContext' | 'analyzeWithPlan' | 'plan'>
+type RagRetriever = Pick<RagIndexService, 'isConfigured' | 'retrieve'>
 
 export class AnalysisExecutionError extends Error {
   constructor(cause: unknown, readonly metadata: AnalysisExecutionMetadata) {
@@ -25,9 +37,13 @@ export class AnalysisExecutionError extends Error {
 
 @Injectable()
 export class AnalysisRunner {
-  constructor(@Inject(DeepSeekService) private readonly deepseek: AnalysisProvider) {}
+  constructor(
+    @Inject(DeepSeekService) private readonly deepseek: AnalysisProvider,
+    @Optional() @Inject(RagIndexService) private readonly rag?: RagRetriever,
+  ) {}
 
-  async run({ mode, title, desensitizedContent }: AnalysisRunnerInput): Promise<AnalysisRunnerResult> {
+  async run(input: AnalysisRunnerInput): Promise<AnalysisRunnerResult> {
+    const { mode, title, desensitizedContent } = input
     if (mode === 'manual') {
       return {
         result: { summary: 'Manual review required', decisions: [], tasks: [], risks: [] },
@@ -43,10 +59,67 @@ export class AnalysisRunner {
       catch (error) { throw new AnalysisExecutionError(error, this.metadata(mode, 2)) }
       return { result, metadata: { ...this.metadata(mode, 2), plan } }
     }
+    if (mode === 'rag' && this.rag?.isConfigured()) return this.runRag(input)
     let result: MeetingAnalysis
     try { result = await this.deepseek.analyzeWithPlan(title, desensitizedContent, undefined) }
     catch (error) { throw new AnalysisExecutionError(error, this.metadata(mode, 1)) }
     return { result, metadata: this.metadata(mode, 1) }
+  }
+
+  private async runRag(input: AnalysisRunnerInput): Promise<AnalysisRunnerResult> {
+    const startedAt = Date.now()
+    if (!input.projectId || !input.meetingId || !input.versionId) {
+      throw new AnalysisExecutionError(new Error('RAG retrieval failed'), this.failedRagMetadata(Date.now() - startedAt))
+    }
+    let retrieval: Awaited<ReturnType<RagRetriever['retrieve']>>
+    try {
+      retrieval = await this.rag!.retrieve({
+        projectId: input.projectId,
+        meetingId: input.meetingId,
+        versionId: input.versionId,
+        desensitizedContent: input.desensitizedContent,
+      })
+    } catch {
+      throw new AnalysisExecutionError(new Error('RAG retrieval failed'), this.failedRagMetadata(Date.now() - startedAt))
+    }
+    const evidence = retrieval.evidence.slice(0, 5)
+    const context = this.evidenceContext(evidence)
+    let result: MeetingAnalysis
+    try {
+      result = await this.deepseek.analyzeWithContext(input.title, input.desensitizedContent, context)
+    } catch (error) {
+      throw new AnalysisExecutionError(error, {
+        ...this.completedRagMetadata(retrieval.durationMs, evidence),
+        modelCallCount: 1,
+      })
+    }
+    return { result, metadata: this.completedRagMetadata(retrieval.durationMs, evidence) }
+  }
+
+  private evidenceContext(evidence: RetrievalEvidence[]): string {
+    return evidence.map((item, index) =>
+      `Source ${index + 1} [meeting=${item.meetingId}, version=${item.versionId}, chunk=${item.chunkIndex}, score=${item.score}]:\n${item.text}`,
+    ).join('\n\n')
+  }
+
+  private completedRagMetadata(durationMs: number, evidence: RetrievalEvidence[]): AnalysisExecutionMetadata {
+    return {
+      ...this.metadata('rag', 1),
+      retrievalEnabled: true,
+      retrievalStatus: 'completed',
+      retrievalDurationMs: Math.max(0, durationMs),
+      retrievalHitCount: evidence.length,
+      retrievalSources: evidence.map(({ meetingId, versionId, chunkIndex, score }) => ({ meetingId, versionId, chunkIndex, score })),
+    }
+  }
+
+  private failedRagMetadata(durationMs: number): AnalysisExecutionMetadata {
+    return {
+      ...this.metadata('rag', 0),
+      retrievalEnabled: true,
+      retrievalStatus: 'failed',
+      retrievalDurationMs: Math.max(0, durationMs),
+    }
   }
 
   private metadata(mode: AnalysisMode, modelCallCount: number): AnalysisExecutionMetadata {

@@ -16,6 +16,7 @@ export class AppController {
   @Get('projects') async projects(@Headers('authorization') authorization?: string) { return this.app.projects(await this.user(authorization)) }
   @Get('projects/:id/detail') async projectDetail(@Headers('authorization') authorization: string | undefined, @Param('id') id: string) { return this.app.projectDetail(await this.user(authorization), id) }
   @Get('projects/:id/experiment-summary') async experimentSummary(@Headers('authorization') authorization: string | undefined, @Param('id') id: string) { return this.app.experimentSummary(await this.user(authorization), id) }
+  @Post('projects/:id/rag-index/sync') async syncProjectRagIndex(@Headers('authorization') authorization: string | undefined, @Param('id') id: string) { return this.app.syncProjectRagIndex(await this.user(authorization), id) }
   @Get('projects/:id/export-data') async projectExport(@Headers('authorization') authorization: string | undefined, @Param('id') id: string, @Query('kind') kind?: string) {
     if (kind !== 'meetings' && kind !== 'tasks' && kind !== 'summary') throw new BadRequestException('Unsupported export kind')
     return this.app.exportProjectData(await this.user(authorization), id, kind)
