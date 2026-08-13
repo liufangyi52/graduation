@@ -3,6 +3,7 @@ import { ArrayMaxSize, ArrayMinSize, IsArray, IsBoolean, IsEmail, IsIn, IsInt, I
 
 const roles = ['manager', 'member', 'admin', 'auditor'] as const
 const statuses = ['todo', 'in_progress', 'completed', 'closed'] as const
+const activeTaskStatuses = ['todo', 'in_progress', 'completed'] as const
 const projectRoles = ['manager', 'member'] as const
 const projectStatuses = ['active', 'paused', 'archived'] as const
 const priorities = ['low', 'medium', 'high', 'urgent'] as const
@@ -55,7 +56,7 @@ export class UpdateDesensitizationRuleDto {
 }
 
 export class UpdateTaskDto {
-  @IsOptional() @IsIn(statuses) status?: typeof statuses[number]
+  @IsOptional() @IsIn(activeTaskStatuses) status?: typeof activeTaskStatuses[number]
   @IsOptional() @Type(() => Number) @IsInt() @Min(0) @Max(100) progress?: number
 }
 
@@ -85,7 +86,7 @@ export class CreateTaskDto {
   @IsOptional() @IsString() @MaxLength(4000) description?: string
   @IsUUID() assigneeId!: string
   @IsIn(priorities) priority!: typeof priorities[number]
-  @IsOptional() @IsIn(statuses) status?: typeof statuses[number]
+  @IsOptional() @IsIn(activeTaskStatuses) status?: typeof activeTaskStatuses[number]
   @IsOptional() @Type(() => Number) @IsInt() @Min(0) @Max(100) progress?: number
   @IsOptional() @IsString() dueDate?: string | null
 }
@@ -95,7 +96,7 @@ export class UpdateManagedTaskDto {
   @IsOptional() @IsString() @MaxLength(4000) description?: string
   @IsOptional() @IsUUID() assigneeId?: string
   @IsOptional() @IsIn(priorities) priority?: typeof priorities[number]
-  @IsOptional() @IsIn(statuses) status?: typeof statuses[number]
+  @IsOptional() @IsIn(activeTaskStatuses) status?: typeof activeTaskStatuses[number]
   @IsOptional() @Type(() => Number) @IsInt() @Min(0) @Max(100) progress?: number
   @IsOptional() @IsString() dueDate?: string | null
 }

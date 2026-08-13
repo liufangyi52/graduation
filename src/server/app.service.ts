@@ -3,7 +3,7 @@ import bcrypt from 'bcryptjs'
 import jwt from 'jsonwebtoken'
 import { randomUUID } from 'node:crypto'
 import { pool } from './database'
-import { assertFeedbackInput, assertTaskUpdateInput, canRegisterRole, canUpdateTask } from './authorization'
+import { assertFeedbackInput, assertManagedTaskInput, assertTaskStatusTransition, assertTaskUpdateInput, canRegisterRole, canUpdateTask } from './authorization'
 import { DeepSeekService, normalizeAnalysis, type MeetingAnalysis } from './deepseek.service'
 import { applyDesensitization, type DesensitizationEntry } from './desensitization'
 
@@ -243,6 +243,7 @@ export class AppService {
     if (!rows[0]) throw new BadRequestException('任务不存在')
     if (user.role === 'member' && rows[0].assignee_id !== user.id) throw new ForbiddenException('只能更新本人任务')
     if (user.role === 'manager') await this.assertProjectManager(user, rows[0].project_id)
+    try { assertTaskStatusTransition(rows[0].status, (input.status ?? rows[0].status) as any, user.role === 'manager') } catch (error) { throw new BadRequestException(error instanceof Error ? error.message : 'Invalid task transition') }
     const progress = input.progress
     const status = progress === 100 ? 'completed' : input.status
     await pool.execute('UPDATE tasks SET status=COALESCE(?,status), progress=COALESCE(?,progress) WHERE id=?', [status ?? null, progress ?? null, id])
@@ -394,6 +395,95 @@ export class AppService {
     await this.assertProjectManager(user, projectId)
     const [rows] = await pool.query<any[]>('SELECT id,project_id,name,pattern,replacement,enabled,created_at,updated_at FROM desensitization_rules WHERE project_id=? ORDER BY created_at ASC,id ASC', [projectId])
     return rows
+  }
+
+  async createTask(user: SessionUser, input: { projectId: string; title: string; description?: string; assigneeId: string; priority: 'low' | 'medium' | 'high' | 'urgent'; status?: 'todo' | 'in_progress' | 'completed'; progress?: number; dueDate?: string | null }) {
+    try { assertManagedTaskInput(input) } catch (error) { throw new BadRequestException(error instanceof Error ? error.message : 'Invalid task') }
+    await this.assertProjectManager(user, input.projectId)
+    const [assignees] = await pool.query<any[]>('SELECT u.id FROM project_members pm JOIN users u ON u.id=pm.user_id WHERE pm.project_id=? AND pm.user_id=? AND u.is_active=TRUE', [input.projectId, input.assigneeId])
+    if (!assignees[0]) throw new BadRequestException('Task assignee must be an active project member')
+    const id = randomUUID()
+    const status = input.progress === 100 ? 'completed' : input.status ?? 'todo'
+    const progress = input.progress ?? 0
+    const connection = await pool.getConnection()
+    try {
+      await connection.beginTransaction()
+      await connection.execute('INSERT INTO tasks (id,title,description,project_id,assignee_id,priority,status,progress,due_date) VALUES (?,?,?,?,?,?,?,?,?)', [id, input.title.trim(), input.description?.trim() || null, input.projectId, input.assigneeId, input.priority, status, progress, input.dueDate || null])
+      await connection.execute('INSERT INTO notifications (id,user_id,title,body,link) VALUES (?,?,?,?,?)', [randomUUID(), input.assigneeId, `已分配任务：${input.title.trim()}`, '请查看任务详情并更新进度。', '/my-tasks'])
+      await connection.commit()
+    } catch (error) { await connection.rollback(); throw error } finally { connection.release() }
+    await this.audit(user.id, 'task.created', 'task', id, { projectId: input.projectId, title: input.title.trim(), assigneeId: input.assigneeId, priority: input.priority, status, progress })
+    return { id, title: input.title.trim(), projectId: input.projectId, assigneeId: input.assigneeId, priority: input.priority, status, progress, dueDate: input.dueDate ?? null }
+  }
+
+  async closeTask(user: SessionUser, taskId: string) {
+    if (user.role !== 'manager') throw new ForbiddenException('Only managers can close tasks')
+    const [rows] = await pool.query<any[]>('SELECT project_id FROM tasks WHERE id=?', [taskId])
+    if (!rows[0]) throw new BadRequestException('Task does not exist')
+    await this.assertProjectManager(user, rows[0].project_id)
+    await pool.execute('UPDATE tasks SET status="closed" WHERE id=?', [taskId])
+    await this.audit(user.id, 'task.closed', 'task', taskId)
+    return { id: taskId, status: 'closed' }
+  }
+
+  async updateManagedTask(user: SessionUser, taskId: string, input: { title?: string; description?: string; assigneeId?: string; priority?: 'low' | 'medium' | 'high' | 'urgent'; status?: 'todo' | 'in_progress' | 'completed'; progress?: number; dueDate?: string | null }) {
+    const [rows] = await pool.query<any[]>('SELECT id,project_id,assignee_id,status,title,due_date FROM tasks WHERE id=?', [taskId])
+    const task = rows[0]
+    if (!task) throw new BadRequestException('Task does not exist')
+    await this.assertProjectManager(user, task.project_id)
+    if (input.assigneeId !== undefined) {
+      const [assignees] = await pool.query<any[]>('SELECT u.id FROM project_members pm JOIN users u ON u.id=pm.user_id WHERE pm.project_id=? AND pm.user_id=? AND u.is_active=TRUE', [task.project_id, input.assigneeId])
+      if (!assignees[0]) throw new BadRequestException('Task assignee must be an active project member')
+    }
+    const fields: string[] = []
+    const values: Array<string | number | null> = []
+    if (input.title !== undefined) { if (!input.title.trim()) throw new BadRequestException('Task title is required'); fields.push('title=?'); values.push(input.title.trim()) }
+    if (input.description !== undefined) { fields.push('description=?'); values.push(input.description.trim() || null) }
+    if (input.assigneeId !== undefined) { fields.push('assignee_id=?'); values.push(input.assigneeId) }
+    if (input.priority !== undefined) { fields.push('priority=?'); values.push(input.priority) }
+    if (input.dueDate !== undefined) { fields.push('due_date=?'); values.push(input.dueDate || null) }
+    if (input.status !== undefined) { fields.push('status=?'); values.push(input.status) }
+    if (input.progress !== undefined) { fields.push('progress=?'); values.push(input.progress); if (input.progress === 100 && input.status === undefined) fields.push('status="completed"') }
+    if (!fields.length) throw new BadRequestException('No task changes supplied')
+    await pool.execute(`UPDATE tasks SET ${fields.join(',')} WHERE id=?`, [...values, taskId])
+    if (input.assigneeId && input.assigneeId !== task.assignee_id) await pool.execute('INSERT INTO notifications (id,user_id,title,body,link) VALUES (?,?,?,?,?)', [randomUUID(), input.assigneeId, `已分配任务：${input.title?.trim() ?? task.title}`, '请查看任务详情并更新进度。', '/my-tasks'])
+    await this.audit(user.id, 'task.updated', 'task', taskId, { fields: Object.keys(input).filter((key) => input[key as keyof typeof input] !== undefined) })
+    return { id: taskId, ...input }
+  }
+
+  async reopenTask(user: SessionUser, taskId: string, status: 'todo' | 'in_progress' = 'todo') {
+    if (user.role !== 'manager') throw new ForbiddenException('Only managers can close tasks')
+    const [rows] = await pool.query<any[]>('SELECT project_id,status FROM tasks WHERE id=?', [taskId])
+    if (!rows[0]) throw new BadRequestException('Task does not exist')
+    await this.assertProjectManager(user, rows[0].project_id)
+    if (rows[0].status !== 'closed') throw new BadRequestException('Only closed tasks can be reopened')
+    await pool.execute('UPDATE tasks SET status=? WHERE id=?', [status, taskId])
+    await this.audit(user.id, 'task.reopened', 'task', taskId, { status })
+    return { id: taskId, status }
+  }
+
+  private async visibleTaskForNote(user: SessionUser, taskId: string) {
+    const [rows] = await pool.query<any[]>('SELECT t.id,t.project_id,t.assignee_id,p.owner_id FROM tasks t JOIN projects p ON p.id=t.project_id WHERE t.id=? AND p.deleted_at IS NULL', [taskId])
+    const task = rows[0]
+    if (!task) throw new BadRequestException('Task does not exist')
+    if (user.role === 'manager' && task.owner_id === user.id) return task
+    if (user.role === 'member' && task.assignee_id === user.id) return task
+    throw new ForbiddenException('You cannot access this task')
+  }
+
+  async listTaskNotes(user: SessionUser, taskId: string) {
+    await this.visibleTaskForNote(user, taskId)
+    const [rows] = await pool.query<any[]>('SELECT n.id,n.task_id,n.author_id,n.content,n.created_at,u.name author_name FROM task_notes n JOIN users u ON u.id=n.author_id WHERE n.task_id=? ORDER BY n.created_at ASC', [taskId])
+    return rows
+  }
+
+  async addTaskNote(user: SessionUser, taskId: string, content: string) {
+    if (!content?.trim()) throw new BadRequestException('Task note is required')
+    await this.visibleTaskForNote(user, taskId)
+    const id = randomUUID()
+    await pool.execute('INSERT INTO task_notes (id,task_id,author_id,content) VALUES (?,?,?,?)', [id, taskId, user.id, content.trim()])
+    await this.audit(user.id, 'task.note_created', 'task_note', id, { taskId })
+    return { id, taskId, authorId: user.id, content: content.trim() }
   }
 
   private assertPattern(pattern: string) {
