@@ -17,6 +17,7 @@ export type VectorStore = {
   isConfigured(): boolean
   ensureCollection(): Promise<void>
   upsert(points: VectorPoint[]): Promise<void>
+  removeMeetingVersions(query: { projectId: string; meetingId: string; retainedVersionId: string }): Promise<void>
   search(vector: number[], query: { projectId: string; excludedVersionId: string; limit: number }): Promise<VectorSearchResult[]>
   health(): Promise<boolean>
 }
@@ -46,6 +47,9 @@ export class QdrantVectorStore implements VectorStore {
         vectors: { size: 2560, distance: 'Cosine' },
       }))
     }
+    await this.request(`/collections/${COLLECTION_NAME}/index`, this.jsonRequest('PUT', {
+      field_name: 'projectId', field_schema: 'keyword',
+    }))
     this.collectionEnsured = true
   }
 
@@ -53,6 +57,18 @@ export class QdrantVectorStore implements VectorStore {
     if (points.length === 0) return
     const qdrantPoints = points.map((point) => ({ ...point, id: this.qdrantPointId(point.id) }))
     await this.request(`/collections/${COLLECTION_NAME}/points?wait=true`, this.jsonRequest('PUT', { points: qdrantPoints }))
+  }
+
+  async removeMeetingVersions(query: { projectId: string; meetingId: string; retainedVersionId: string }): Promise<void> {
+    await this.request(`/collections/${COLLECTION_NAME}/points/delete?wait=true`, this.jsonRequest('POST', {
+      filter: {
+        must: [
+          { key: 'projectId', match: { value: query.projectId } },
+          { key: 'meetingId', match: { value: query.meetingId } },
+        ],
+        must_not: [{ key: 'versionId', match: { value: query.retainedVersionId } }],
+      },
+    }))
   }
 
   async search(vector: number[], query: { projectId: string; excludedVersionId: string; limit: number }): Promise<VectorSearchResult[]> {

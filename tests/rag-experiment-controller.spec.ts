@@ -11,6 +11,23 @@ function deferred<T>() {
 const summary = { manual: {}, llm: {}, rag: {}, agent: {} } as any
 const ready = { configured: true, ready: true, eligibleVersionCount: 1 }
 
+it('clears an already-loaded A summary immediately when B is selected and still pending', async () => {
+  const bSummary = deferred<any>(); const bStatus = deferred<any>()
+  const controller = createRagExperimentController({
+    experimentSummary: (projectId) => projectId === 'A' ? Promise.resolve(summary) : bSummary.promise,
+    ragIndexStatus: (projectId) => projectId === 'A' ? Promise.resolve(ready) : bStatus.promise,
+    syncRagIndex: async () => ({ indexedChunks: 0 }),
+  })
+
+  await controller.loadSelectedProject('A')
+  const loadB = controller.loadSelectedProject('B')
+
+  expect(controller.state.summary).toBeNull()
+  expect(controller.state.summaryLoading).toBe(true)
+
+  bSummary.resolve(summary); bStatus.resolve(ready); await loadB
+})
+
 it('keeps the newer A selection state when delayed A1 status and summary responses resolve', async () => {
   const a1Summary = deferred<any>(); const a1Status = deferred<any>()
   const bSummary = deferred<any>(); const bStatus = deferred<any>()

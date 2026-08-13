@@ -30,11 +30,17 @@ class FakeEmbedder implements EmbeddingProvider {
 class FakeVectorStore implements VectorStore {
   ensured = 0
   upserted: VectorPoint[][] = []
+  removed: Array<{ projectId: string; meetingId: string; retainedVersionId: string }> = []
+  stored: VectorPoint[] = []
   queries: { vector: number[]; query: { projectId: string; excludedVersionId: string; limit: number } }[] = []
   constructor(private readonly configured = true, private readonly results: VectorSearchResult[] = []) {}
   isConfigured(): boolean { return this.configured }
   async ensureCollection(): Promise<void> { this.ensured += 1 }
-  async upsert(points: VectorPoint[]): Promise<void> { this.upserted.push(points) }
+  async upsert(points: VectorPoint[]): Promise<void> { this.upserted.push(points); this.stored.push(...points) }
+  async removeMeetingVersions(query: { projectId: string; meetingId: string; retainedVersionId: string }): Promise<void> {
+    this.removed.push(query)
+    this.stored = this.stored.filter((point) => point.payload.projectId !== query.projectId || point.payload.meetingId !== query.meetingId || point.payload.versionId === query.retainedVersionId)
+  }
   async search(queryVector: number[], query: { projectId: string; excludedVersionId: string; limit: number }): Promise<VectorSearchResult[]> {
     this.queries.push({ vector: queryVector, query })
     return this.results
@@ -50,6 +56,55 @@ it('chunks a 2400-character desensitized literal at offsets 0, 1000, and 2000', 
     content.slice(1000, 2200),
     content.slice(2000, 2400),
   ])
+})
+
+it('writes the new meeting version before removing only that meeting\'s older versions', async () => {
+  const events: string[] = []
+  const store = new FakeVectorStore()
+  store.upsert = async (points) => { events.push(`upsert:${points[0].payload.versionId}`); store.upserted.push(points) }
+  store.removeMeetingVersions = async (query) => { events.push(`remove:${query.meetingId}:${query.retainedVersionId}`); store.removed.push(query) }
+  const service = new RagIndexService(new FakeEmbedder(), store)
+
+  await service.syncVersion({ ...version, versionId: 'version-2', desensitizedContent: '[PHONE] revised release review' })
+
+  expect(events).toEqual(['upsert:version-2', 'remove:meeting-1:version-2'])
+  expect(store.removed).toEqual([{ projectId: 'project-1', meetingId: 'meeting-1', retainedVersionId: 'version-2' }])
+})
+
+it('keeps prior meeting vectors when upserting a newer version fails', async () => {
+  const store = new FakeVectorStore()
+  store.upsert = async () => { throw new Error('Qdrant unavailable') }
+  const service = new RagIndexService(new FakeEmbedder(), store)
+
+  await expect(service.syncVersion({ ...version, versionId: 'version-2' })).rejects.toThrow('Qdrant unavailable')
+
+  expect(store.removed).toEqual([])
+})
+
+it('replaces v1 points with v2 points without deleting other meetings or projects', async () => {
+  const store = new FakeVectorStore()
+  const service = new RagIndexService(new FakeEmbedder(), store)
+  await service.syncVersion({ ...version, versionId: 'version-1', desensitizedContent: '[PHONE] v1' })
+  await service.syncVersion({ ...version, versionId: 'version-2', desensitizedContent: '[PHONE] v2' })
+  store.stored.push({ id: 'other', vector, payload: { projectId: 'project-1', meetingId: 'meeting-2', versionId: 'version-1', chunkIndex: 0, contentHash: 'other', text: '[PHONE] other' } })
+
+  await service.syncVersion({ ...version, versionId: 'version-3', desensitizedContent: '[PHONE] v3' })
+
+  expect(store.stored.map((point) => [point.payload.projectId, point.payload.meetingId, point.payload.versionId])).toEqual([
+    ['project-1', 'meeting-2', 'version-1'],
+    ['project-1', 'meeting-1', 'version-3'],
+  ])
+})
+
+it('removes prior points when the current meeting version has no desensitized content', async () => {
+  const store = new FakeVectorStore()
+  const service = new RagIndexService(new FakeEmbedder(), store)
+  await service.syncVersion({ ...version, versionId: 'version-1', desensitizedContent: '[PHONE] previous' })
+
+  await service.syncVersion({ ...version, versionId: 'version-2', desensitizedContent: '   ' })
+
+  expect(store.stored).toEqual([])
+  expect(store.removed.at(-1)).toEqual({ projectId: 'project-1', meetingId: 'meeting-1', retainedVersionId: 'version-2' })
 })
 
 it('drops whitespace-only desensitized content', () => {

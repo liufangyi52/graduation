@@ -38,6 +38,7 @@ class CountingVectorStore implements VectorStore {
   isConfigured() { return true }
   async ensureCollection() { this.ensured += 1 }
   async upsert(_points: VectorPoint[]) { this.upserted += 1 }
+  async removeMeetingVersions(_query: { projectId: string; meetingId: string; retainedVersionId: string }) {}
   async search(_vector: number[], _query: { projectId: string; excludedVersionId: string; limit: number }): Promise<VectorSearchResult[]> {
     this.searched += 1
     return []

@@ -52,9 +52,12 @@ export class RagIndexService {
     if (!this.isConfigured()) return { indexedChunks: 0 }
 
     const chunks = chunkDesensitizedContent(version.desensitizedContent)
-    if (chunks.length === 0) return { indexedChunks: 0 }
-
     await this.store.ensureCollection()
+    if (chunks.length === 0) {
+      await this.store.removeMeetingVersions({ projectId: version.projectId, meetingId: version.meetingId, retainedVersionId: version.versionId })
+      return { indexedChunks: 0 }
+    }
+
     const vectors = await this.embedder.embed(chunks)
     if (vectors.length !== chunks.length) throw this.unavailable()
 
@@ -71,6 +74,7 @@ export class RagIndexService {
       },
     }))
     await this.store.upsert(points)
+    await this.store.removeMeetingVersions({ projectId: version.projectId, meetingId: version.meetingId, retainedVersionId: version.versionId })
     return { indexedChunks: points.length }
   }
 

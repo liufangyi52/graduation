@@ -35,6 +35,7 @@ export function createRagExperimentController(api: RagExperimentApi) {
       return
     }
     const request = requests.issue('summary', projectId)
+    state.summary = null
     state.summaryLoading = true
     const statusLoad = loadStatus(projectId)
     try {
