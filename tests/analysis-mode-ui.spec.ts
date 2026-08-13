@@ -43,7 +43,7 @@ it('offers all modes at submission and retry, and limits the RAG warning to reco
   }
   expect(appSource).toContain('v-model="meetingAnalysisMode"')
   expect(reviewSource).toContain('v-model="reanalysisMode"')
-  expect(reviewSource).toContain('妫€绱㈡湭閰嶇疆')
+  expect(reviewSource).toContain('检索未配置')
   expect(reviewSource).toContain("retrievalStatus === 'not_configured'")
   expect(reviewSource).not.toContain("analysis.mode === 'rag'")
 })
