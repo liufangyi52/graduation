@@ -6,11 +6,13 @@ import { pool } from './database'
 import { assertFeedbackInput, assertManagedTaskInput, assertTaskStatusTransition, assertTaskUpdateInput, canRegisterRole, canUpdateTask } from './authorization'
 import { DeepSeekService, normalizeAnalysis, type MeetingAnalysis } from './deepseek.service'
 import { applyDesensitization, type DesensitizationEntry } from './desensitization'
+import { buildProjectAnalytics } from '../utils/projectAnalytics'
 
 type Role = 'manager' | 'member' | 'admin' | 'auditor'
 type SessionUser = { id: string; role: Role; name: string; email: string; authVersion?: number }
 type MeetingVersion = { id: string; meetingId: string; versionNumber: number; sourceType: string; originalContent: string; desensitizedContent: string; createdAt?: string }
 type ReviewDraft = MeetingAnalysis
+type ExportKind = 'meetings' | 'tasks' | 'summary'
 
 export function normalizeStoredAnalysis(value: unknown): MeetingAnalysis {
   return normalizeAnalysis(typeof value === 'string' ? JSON.parse(value) : value)
@@ -149,6 +151,65 @@ export class AppService {
       counts: { tasks: Number(project.task_count ?? tasks.length), completedTasks: Number(project.completed_task_count ?? tasks.filter((task) => task.status === 'completed').length), pendingReviews: Number(project.pending_review_count ?? 0), openRisks: Number(project.open_risk_count ?? risks.filter((risk) => risk.status === 'open').length), members: members.length },
       permissions: { canEdit, canCreateTask: canEdit, canManageMembers: canEdit, canManageRisks: canEdit },
     }
+  }
+
+  async exportProjectData(user: SessionUser, projectId: string, kind: ExportKind) {
+    this.assertNotAuditorBusinessRead(user)
+    if (user.role === 'member' && kind !== 'tasks') throw new ForbiddenException('Members can only export tasks')
+    if (user.role === 'manager') await this.assertProjectManager(user, projectId)
+    if (user.role === 'member') await this.assertProjectViewer(user, projectId)
+
+    const [projectRows] = await pool.query<any[]>(`SELECT p.id,p.name,p.code,p.description,p.owner_id,u.name owner_name,p.status,p.start_date,p.end_date
+      FROM projects p JOIN users u ON u.id=p.owner_id WHERE p.id=? AND p.deleted_at IS NULL`, [projectId])
+    const project = projectRows[0]
+    if (!project) throw new BadRequestException('Project does not exist')
+    const projectDto = { id: project.id, name: project.name, code: project.code, description: project.description, ownerId: project.owner_id, ownerName: project.owner_name, status: project.status, startDate: project.start_date, endDate: project.end_date }
+
+    const mapTask = (task: any) => ({ projectId: task.project_id, projectName: task.project_name, title: task.title, description: task.description, assigneeId: task.assignee_id, assigneeName: task.assignee_name, priority: task.priority, status: task.status, progress: Number(task.progress ?? 0), createdAt: task.created_at, dueDate: task.due_date })
+    const mapMeeting = (meeting: any) => {
+      let analysis: any = {}
+      if (meeting.result_json) {
+        try { analysis = typeof meeting.result_json === 'string' ? JSON.parse(meeting.result_json) : meeting.result_json } catch { analysis = {} }
+      }
+      return { title: meeting.title, createdAt: meeting.created_at, latestAnalysisStatus: meeting.latest_analysis_status ?? null, summary: meeting.summary ?? analysis.summary ?? null, decisions: meeting.decisions ?? analysis.decisions ?? [], versionCount: Number(meeting.version_count ?? 0) }
+    }
+
+    const taskQuery = user.role === 'member'
+      ? `SELECT t.project_id,p.name project_name,t.title,t.description,t.assignee_id,u.name assignee_name,t.priority,t.status,t.progress,t.created_at,t.due_date FROM tasks t JOIN projects p ON p.id=t.project_id JOIN users u ON u.id=t.assignee_id WHERE t.project_id=? AND t.assignee_id=? AND p.deleted_at IS NULL ORDER BY t.created_at ASC`
+      : `SELECT t.project_id,p.name project_name,t.title,t.description,t.assignee_id,u.name assignee_name,t.priority,t.status,t.progress,t.created_at,t.due_date FROM tasks t JOIN projects p ON p.id=t.project_id JOIN users u ON u.id=t.assignee_id WHERE t.project_id=? AND p.deleted_at IS NULL ORDER BY t.created_at ASC`
+    const taskValues = user.role === 'member' ? [projectId, user.id] : [projectId]
+
+    if (kind === 'tasks') {
+      const [tasks] = await pool.query<any[]>(taskQuery, taskValues)
+      const result = { project: projectDto, tasks: tasks.map(mapTask) }
+      await this.audit(user.id, 'export.requested', 'project', projectId, { kind, scope: projectId })
+      return result
+    }
+
+    if (kind === 'meetings') {
+      const [meetings] = await pool.query<any[]>(`SELECT m.title,m.created_at,
+      (SELECT a.status FROM ai_analyses a WHERE a.meeting_id=m.id ORDER BY a.created_at DESC LIMIT 1) latest_analysis_status,
+      (SELECT a.result_json FROM ai_analyses a WHERE a.meeting_id=m.id ORDER BY a.created_at DESC LIMIT 1) result_json,
+      (SELECT COUNT(*) FROM meeting_versions mv WHERE mv.meeting_id=m.id) version_count
+      FROM meetings m WHERE m.project_id=? ORDER BY m.created_at ASC`, [projectId])
+      const result = { project: projectDto, meetings: meetings.map(mapMeeting) }
+      await this.audit(user.id, 'export.requested', 'project', projectId, { kind, scope: projectId })
+      return result
+    }
+
+    const [tasks] = await pool.query<any[]>(taskQuery, taskValues)
+    const [meetings] = await pool.query<any[]>(`SELECT m.title,m.created_at,
+      (SELECT a.status FROM ai_analyses a WHERE a.meeting_id=m.id ORDER BY a.created_at DESC LIMIT 1) latest_analysis_status,
+      (SELECT a.result_json FROM ai_analyses a WHERE a.meeting_id=m.id ORDER BY a.created_at DESC LIMIT 1) result_json,
+      (SELECT COUNT(*) FROM meeting_versions mv WHERE mv.meeting_id=m.id) version_count
+      FROM meetings m WHERE m.project_id=? ORDER BY m.created_at ASC`, [projectId])
+    const [risks] = await pool.query<any[]>('SELECT id,title,description,level,status,created_at FROM risks WHERE project_id=? ORDER BY created_at ASC', [projectId])
+    const taskDtos = tasks.map(mapTask)
+    const meetingDtos = meetings.map(mapMeeting)
+    const riskDtos = risks.map((risk) => ({ id: risk.id, title: risk.title, description: risk.description, level: risk.level, status: risk.status, createdAt: risk.created_at }))
+    const result = { project: projectDto, metrics: buildProjectAnalytics({ tasks: taskDtos.map((task) => ({ id: task.title, title: task.title, status: task.status, createdAt: task.createdAt, dueDate: task.dueDate })), risks: riskDtos }, new Date().toISOString()).metrics, tasks: taskDtos, meetings: meetingDtos, risks: riskDtos }
+    await this.audit(user.id, 'export.requested', 'project', projectId, { kind, scope: projectId })
+    return result
   }
 
   async listProjectTags(user: SessionUser, projectId: string) {

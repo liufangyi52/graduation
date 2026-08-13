@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Headers, Inject, Param, Patch, Post, Put, UploadedFile, UseInterceptors } from '@nestjs/common'
+import { BadRequestException, Body, Controller, Delete, Get, Headers, Inject, Param, Patch, Post, Put, Query, UploadedFile, UseInterceptors } from '@nestjs/common'
 import { FileInterceptor } from '@nestjs/platform-express'
 import { AppService } from './app.service'
 import { CreateMeetingDto, CreateProjectDto, CreateTaskDto, DesensitizationRuleDto, FeedbackDto, ImportMeetingDto, LoginDto, ManagedUserDto, ManagedUserUpdateDto, ProjectMemberDto, ProjectMemberUpdateDto, RegisterDto, ResetPasswordDto, ReviewBatchDto, ReviewDto, ReviewDraftDto, SystemSettingsDto, TagDto, TaskNoteDto, UpdateDesensitizationRuleDto, UpdateManagedTaskDto, UpdateProjectDto, UpdateTagDto, UpdateTaskDto } from './dtos'
@@ -15,6 +15,10 @@ export class AppController {
   @Get('auth/me') async me(@Headers('authorization') authorization?: string) { return this.app.databaseUser(authorization?.replace(/^Bearer\s+/i, '')) }
   @Get('projects') async projects(@Headers('authorization') authorization?: string) { return this.app.projects(await this.user(authorization)) }
   @Get('projects/:id/detail') async projectDetail(@Headers('authorization') authorization: string | undefined, @Param('id') id: string) { return this.app.projectDetail(await this.user(authorization), id) }
+  @Get('projects/:id/export-data') async projectExport(@Headers('authorization') authorization: string | undefined, @Param('id') id: string, @Query('kind') kind?: string) {
+    if (kind !== 'meetings' && kind !== 'tasks' && kind !== 'summary') throw new BadRequestException('Unsupported export kind')
+    return this.app.exportProjectData(await this.user(authorization), id, kind)
+  }
   @Get('projects/deleted') async deletedProjects(@Headers('authorization') authorization?: string) { return this.app.deletedProjects(await this.user(authorization)) }
   @Post('projects') async createProject(@Headers('authorization') authorization: string | undefined, @Body() body: CreateProjectDto) { return this.app.createProject(await this.user(authorization), body) }
   @Patch('projects/:id') async updateProject(@Headers('authorization') authorization: string | undefined, @Param('id') id: string, @Body() body: UpdateProjectDto) { return this.app.updateProject(await this.user(authorization), id, body) }
