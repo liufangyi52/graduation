@@ -1,7 +1,7 @@
 import { Body, Controller, Delete, Get, Headers, Inject, Param, Patch, Post, UploadedFile, UseInterceptors } from '@nestjs/common'
 import { FileInterceptor } from '@nestjs/platform-express'
 import { AppService } from './app.service'
-import { CreateMeetingDto, CreateProjectDto, FeedbackDto, ImportMeetingDto, LoginDto, ManagedUserDto, ManagedUserUpdateDto, ProjectMemberDto, ProjectMemberUpdateDto, RegisterDto, ResetPasswordDto, ReviewDto, SystemSettingsDto, TagDto, UpdateProjectDto, UpdateTagDto, UpdateTaskDto } from './dtos'
+import { CreateMeetingDto, CreateProjectDto, DesensitizationRuleDto, FeedbackDto, ImportMeetingDto, LoginDto, ManagedUserDto, ManagedUserUpdateDto, ProjectMemberDto, ProjectMemberUpdateDto, RegisterDto, ResetPasswordDto, ReviewDto, SystemSettingsDto, TagDto, UpdateDesensitizationRuleDto, UpdateProjectDto, UpdateTagDto, UpdateTaskDto } from './dtos'
 import { extractMeetingFileContent, type UploadedMeetingFile } from './document-import'
 
 @Controller('api')
@@ -25,6 +25,10 @@ export class AppController {
   @Delete('projects/:id/tags/:tagId') async deleteProjectTag(@Headers('authorization') authorization: string | undefined, @Param('id') id: string, @Param('tagId') tagId: string) { return this.app.deleteProjectTag(await this.user(authorization), id, tagId) }
   @Post('projects/:id/tags/:tagId/link') async linkProjectTag(@Headers('authorization') authorization: string | undefined, @Param('id') id: string, @Param('tagId') tagId: string) { return this.app.linkProjectTag(await this.user(authorization), id, tagId) }
   @Delete('projects/:id/tags/:tagId/link') async unlinkProjectTag(@Headers('authorization') authorization: string | undefined, @Param('id') id: string, @Param('tagId') tagId: string) { return this.app.unlinkProjectTag(await this.user(authorization), id, tagId) }
+  @Get('projects/:id/desensitization-rules') async desensitizationRules(@Headers('authorization') authorization: string | undefined, @Param('id') id: string) { return this.app.listDesensitizationRules(await this.user(authorization), id) }
+  @Post('projects/:id/desensitization-rules') async createDesensitizationRule(@Headers('authorization') authorization: string | undefined, @Param('id') id: string, @Body() body: DesensitizationRuleDto) { return this.app.createDesensitizationRule(await this.user(authorization), id, body) }
+  @Patch('projects/:id/desensitization-rules/:ruleId') async updateDesensitizationRule(@Headers('authorization') authorization: string | undefined, @Param('id') id: string, @Param('ruleId') ruleId: string, @Body() body: UpdateDesensitizationRuleDto) { return this.app.updateDesensitizationRule(await this.user(authorization), id, ruleId, body) }
+  @Delete('projects/:id/desensitization-rules/:ruleId') async deleteDesensitizationRule(@Headers('authorization') authorization: string | undefined, @Param('id') id: string, @Param('ruleId') ruleId: string) { return this.app.deleteDesensitizationRule(await this.user(authorization), id, ruleId) }
   @Get('projects/:id/members') async projectMembers(@Headers('authorization') authorization: string | undefined, @Param('id') id: string) { return this.app.listProjectMembers(await this.user(authorization), id) }
   @Get('projects/:id/member-candidates') async projectMemberCandidates(@Headers('authorization') authorization: string | undefined, @Param('id') id: string) { return this.app.projectMemberCandidates(await this.user(authorization), id) }
   @Post('projects/:id/members') async addProjectMember(@Headers('authorization') authorization: string | undefined, @Param('id') id: string, @Body() body: ProjectMemberDto) { return this.app.addProjectMember(await this.user(authorization), id, body.userId, body.projectRole) }
@@ -46,6 +50,7 @@ export class AppController {
   @Get('meetings/:id/versions/:versionId') async meetingVersion(@Headers('authorization') authorization: string | undefined, @Param('id') id: string, @Param('versionId') versionId: string) { return this.app.getMeetingVersion(await this.user(authorization), id, versionId) }
   @Post('meetings/:id/versions/:versionId/restore') async restoreMeetingVersion(@Headers('authorization') authorization: string | undefined, @Param('id') id: string, @Param('versionId') versionId: string) { return this.app.restoreMeetingVersion(await this.user(authorization), id, versionId) }
   @Post('meetings/:id/analyze') async analyzeMeeting(@Headers('authorization') authorization: string | undefined, @Param('id') id: string) { return this.app.analyzeMeeting(await this.user(authorization), id) }
+  @Get('meetings/:id/desensitization-logs') async desensitizationLogs(@Headers('authorization') authorization: string | undefined, @Param('id') id: string) { return this.app.listMeetingDesensitizationLogs(await this.user(authorization), id) }
   @Get('analyses') async analyses(@Headers('authorization') authorization?: string) { return this.app.listAnalyses(await this.user(authorization)) }
   @Post('analyses/:id/review') async review(@Headers('authorization') authorization: string | undefined, @Param('id') id: string, @Body() body: ReviewDto) { return this.app.reviewAnalysis(await this.user(authorization), id, body.approved, body.reason) }
   @Get('risks') async risks(@Headers('authorization') authorization?: string) { return this.app.risks(await this.user(authorization)) }

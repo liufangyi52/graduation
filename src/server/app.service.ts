@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto'
 import { pool } from './database'
 import { assertFeedbackInput, assertTaskUpdateInput, canRegisterRole, canUpdateTask } from './authorization'
 import { DeepSeekService, normalizeAnalysis, type MeetingAnalysis } from './deepseek.service'
-import { desensitizeMeetingContent } from './desensitization'
+import { applyDesensitization, type DesensitizationEntry } from './desensitization'
 
 type Role = 'manager' | 'member' | 'admin' | 'auditor'
 type SessionUser = { id: string; role: Role; name: string; email: string; authVersion?: number }
@@ -377,9 +377,67 @@ export class AppService {
     throw new ForbiddenException('You cannot view this project')
   }
 
-  private async desensitizedMeetingContent(content: string) {
+  private async desensitizeForProject(projectId: string, content: string): Promise<{ content: string; entries: DesensitizationEntry[] }> {
     const [rows] = await pool.query<any[]>('SELECT desensitize FROM system_settings WHERE id=1')
-    return rows[0]?.desensitize === false || Number(rows[0]?.desensitize) === 0 ? content : desensitizeMeetingContent(content).content
+    if (rows[0]?.desensitize === false || Number(rows[0]?.desensitize) === 0) return { content, entries: [] }
+    const [rules] = await pool.query<any[]>('SELECT id,pattern,replacement,enabled FROM desensitization_rules WHERE project_id=? AND enabled=TRUE ORDER BY created_at ASC,id ASC', [projectId])
+    return applyDesensitization(content, rules)
+  }
+
+  private async writeDesensitizationLogs(connection: { execute: Function }, versionId: string, actorId: string, entries: DesensitizationEntry[]) {
+    for (const entry of entries) {
+      await connection.execute('INSERT INTO desensitization_logs (id,meeting_version_id,actor_id,rule_kind,rule_id,hit_count) VALUES (?,?,?,?,?,?)', [randomUUID(), versionId, actorId, entry.ruleKind, entry.ruleId, entry.hitCount])
+    }
+  }
+
+  async listDesensitizationRules(user: SessionUser, projectId: string) {
+    await this.assertProjectManager(user, projectId)
+    const [rows] = await pool.query<any[]>('SELECT id,project_id,name,pattern,replacement,enabled,created_at,updated_at FROM desensitization_rules WHERE project_id=? ORDER BY created_at ASC,id ASC', [projectId])
+    return rows
+  }
+
+  private assertPattern(pattern: string) {
+    try { new RegExp(pattern, 'g') } catch { throw new BadRequestException('Invalid desensitization pattern') }
+  }
+
+  async createDesensitizationRule(user: SessionUser, projectId: string, input: { name: string; pattern: string; replacement: string; enabled: boolean }) {
+    await this.assertProjectManager(user, projectId)
+    this.assertPattern(input.pattern)
+    const id = randomUUID()
+    const name = input.name.trim()
+    await pool.execute('INSERT INTO desensitization_rules (id,project_id,name,pattern,replacement,enabled,created_by) VALUES (?,?,?,?,?,?,?)', [id, projectId, name, input.pattern, input.replacement, input.enabled, user.id])
+    await this.audit(user.id, 'desensitization_rule.created', 'desensitization_rule', id, { projectId, name, enabled: input.enabled })
+    return { id, projectId, ...input, name }
+  }
+
+  async updateDesensitizationRule(user: SessionUser, projectId: string, ruleId: string, input: { name?: string; pattern?: string; replacement?: string; enabled?: boolean }) {
+    await this.assertProjectManager(user, projectId)
+    if (input.pattern !== undefined) this.assertPattern(input.pattern)
+    const fields: string[] = []
+    const values: Array<string | boolean> = []
+    if (input.name !== undefined) { fields.push('name=?'); values.push(input.name.trim()) }
+    if (input.pattern !== undefined) { fields.push('pattern=?'); values.push(input.pattern) }
+    if (input.replacement !== undefined) { fields.push('replacement=?'); values.push(input.replacement) }
+    if (input.enabled !== undefined) { fields.push('enabled=?'); values.push(input.enabled) }
+    if (!fields.length) throw new BadRequestException('No desensitization rule changes supplied')
+    const [result] = await pool.execute<any>(`UPDATE desensitization_rules SET ${fields.join(',')} WHERE id=? AND project_id=?`, [...values, ruleId, projectId])
+    if (!result.affectedRows) throw new BadRequestException('Desensitization rule does not exist')
+    await this.audit(user.id, 'desensitization_rule.updated', 'desensitization_rule', ruleId, { projectId, fields: Object.keys(input).filter((key) => input[key as keyof typeof input] !== undefined) })
+    return { id: ruleId, projectId, ...input }
+  }
+
+  async deleteDesensitizationRule(user: SessionUser, projectId: string, ruleId: string) {
+    await this.assertProjectManager(user, projectId)
+    const [result] = await pool.execute<any>('DELETE FROM desensitization_rules WHERE id=? AND project_id=?', [ruleId, projectId])
+    if (!result.affectedRows) throw new BadRequestException('Desensitization rule does not exist')
+    await this.audit(user.id, 'desensitization_rule.deleted', 'desensitization_rule', ruleId, { projectId })
+    return { id: ruleId, deleted: true }
+  }
+
+  async listMeetingDesensitizationLogs(user: SessionUser, meetingId: string) {
+    await this.assertProjectManager(user, await this.meetingProjectId(meetingId))
+    const [rows] = await pool.query<any[]>('SELECT l.id,l.meeting_version_id,l.rule_kind,l.rule_id,l.hit_count,l.created_at,u.name actor_name FROM desensitization_logs l JOIN meeting_versions v ON v.id=l.meeting_version_id LEFT JOIN users u ON u.id=l.actor_id WHERE v.meeting_id=? ORDER BY l.created_at ASC', [meetingId])
+    return rows
   }
 
   private versionResult(row: any): MeetingVersion {
@@ -412,7 +470,8 @@ export class AppService {
   }
 
   async restoreMeetingVersion(user: SessionUser, meetingId: string, versionId: string) {
-    await this.assertProjectManager(user, await this.meetingProjectId(meetingId))
+    const projectId = await this.meetingProjectId(meetingId)
+    await this.assertProjectManager(user, projectId)
     const connection = await pool.getConnection()
     try {
       await connection.beginTransaction()
@@ -421,11 +480,13 @@ export class AppService {
       const [numbers] = await connection.query<any[]>('SELECT COALESCE(MAX(version_number), 0) + 1 next_version FROM meeting_versions WHERE meeting_id=? FOR UPDATE', [meetingId])
       const id = randomUUID()
       const versionNumber = Number(numbers[0]?.next_version ?? 1)
-      await connection.execute('INSERT INTO meeting_versions (id,meeting_id,version_number,source_type,original_content,desensitized_content,created_by) VALUES (?,?,?,?,?,?,?)', [id, meetingId, versionNumber, 'restore', versions[0].original_content, versions[0].desensitized_content, user.id])
+      const desensitized = await this.desensitizeForProject(projectId, versions[0].original_content)
+      await connection.execute('INSERT INTO meeting_versions (id,meeting_id,version_number,source_type,original_content,desensitized_content,created_by) VALUES (?,?,?,?,?,?,?)', [id, meetingId, versionNumber, 'restore', versions[0].original_content, desensitized.content, user.id])
+      await this.writeDesensitizationLogs(connection, id, user.id, desensitized.entries)
       await connection.execute('UPDATE meetings SET current_version_id=? WHERE id=?', [id, meetingId])
       await connection.commit()
       await this.audit(user.id, 'meeting.version_restored', 'meeting', meetingId, { versionNumber, sourceVersionId: versionId })
-      return { id, meetingId, versionNumber, sourceType: 'restore', originalContent: versions[0].original_content, desensitizedContent: versions[0].desensitized_content }
+      return { id, meetingId, versionNumber, sourceType: 'restore', originalContent: versions[0].original_content, desensitizedContent: desensitized.content }
     } catch (reason) {
       await connection.rollback()
       throw reason
@@ -446,12 +507,13 @@ export class AppService {
     const id = randomUUID()
     const versionId = randomUUID()
     const originalContent = input.content.trim()
-    const maskedContent = await this.desensitizedMeetingContent(originalContent)
+    const desensitized = await this.desensitizeForProject(input.projectId, originalContent)
     const connection = await pool.getConnection()
     try {
       await connection.beginTransaction()
       await connection.execute('INSERT INTO meetings (id,project_id,created_by,title,content,current_version_id) VALUES (?,?,?,?,?,?)', [id, input.projectId, user.id, input.title.trim(), originalContent, versionId])
-      await connection.execute('INSERT INTO meeting_versions (id,meeting_id,version_number,source_type,original_content,desensitized_content,created_by) VALUES (?,?,?,?,?,?,?)', [versionId, id, 1, input.sourceType ?? 'text', originalContent, maskedContent, user.id])
+      await connection.execute('INSERT INTO meeting_versions (id,meeting_id,version_number,source_type,original_content,desensitized_content,created_by) VALUES (?,?,?,?,?,?,?)', [versionId, id, 1, input.sourceType ?? 'text', originalContent, desensitized.content, user.id])
+      await this.writeDesensitizationLogs(connection, versionId, user.id, desensitized.entries)
       await connection.commit()
     } catch (reason) {
       await connection.rollback()
@@ -470,7 +532,7 @@ export class AppService {
     const analysisId = randomUUID()
     await pool.execute('INSERT INTO ai_analyses (id,meeting_id,requested_by,status,model) VALUES (?,?,?,?,?)', [analysisId, meetingId, user.id, 'pending', process.env.DEEPSEEK_MODEL ?? 'deepseek-chat'])
     try {
-      const result = await this.deepseek.analyze(rows[0].title, rows[0].desensitized_content ?? await this.desensitizedMeetingContent(rows[0].content))
+      const result = await this.deepseek.analyze(rows[0].title, rows[0].desensitized_content ?? (await this.desensitizeForProject(rows[0].project_id, rows[0].content)).content)
       await pool.execute('UPDATE ai_analyses SET result_json=? WHERE id=?', [JSON.stringify(result), analysisId])
       await this.audit(user.id, 'meeting.analyzed', 'analysis', analysisId, { model: process.env.DEEPSEEK_MODEL ?? 'deepseek-chat' })
       return { id: analysisId, meetingId, status: 'pending', result }

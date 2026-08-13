@@ -21,6 +21,8 @@ it('restores a historical meeting version by inserting a new current version', a
   vi.spyOn(pool, 'query')
     .mockResolvedValueOnce([[{ project_id: 'project-1' }]] as any)
     .mockResolvedValueOnce([[{ owner_id: 'manager-1' }]] as any)
+    .mockResolvedValueOnce([[{ desensitize: true }]] as any)
+    .mockResolvedValueOnce([[]] as any)
   vi.spyOn(pool, 'execute').mockResolvedValue([] as any)
   const service = new AppService({} as any)
 
