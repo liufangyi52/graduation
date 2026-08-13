@@ -18,3 +18,16 @@ it('defines project detail routes', () => {
   expect(router).toContain("path: '/projects/:id'")
   expect(router).toContain("path: '/projects/:id/meetings'")
 })
+
+it('defines a scannable and responsive project detail layout', () => {
+  const styles = readFileSync(new URL('../src/style.css', import.meta.url), 'utf8')
+
+  expect(source).toContain('class="project-summary-main"')
+  expect(source).toContain('class="project-summary-facts"')
+  expect(source).toContain('class="project-overview-body"')
+  expect(source).toContain('class="metric-grid project-metrics"')
+  expect(styles).toContain('.project-detail-header {')
+  expect(styles).toContain('.project-summary-main {')
+  expect(styles).toContain('.project-detail-page .detail-tabs {')
+  expect(styles).toContain('@media (max-width: 900px)')
+})
