@@ -2,6 +2,8 @@ import { reactive } from 'vue'
 
 export interface MeetingRecord { id: string; projectId: string; title: string; content: string; createdAt: string }
 export interface AnalysisRecord { id: string; meetingId: string; title: string; status: string; result: any; createdAt: string }
+export interface ReviewDraft { summary: string; decisions: string[]; tasks: any[]; risks: any[] }
+export interface ReviewDetail { meeting: any; analysis: any; draft: ReviewDraft | null; evidence: Array<{ start: number; end: number; snippet: string }> }
 export interface MeetingVersionSummary { id: string; meetingId: string; versionNumber: number; sourceType: string; createdAt: string; current?: boolean }
 export interface MeetingVersion extends MeetingVersionSummary { originalContent: string; desensitizedContent: string }
 
@@ -39,6 +41,8 @@ export function createMeetingService(token: string) {
     async analyze(id: string) { return request<any>(`/meetings/${id}/analyze`, { method: 'POST' }) },
     async review(id: string, approved: boolean, reason?: string) { return request<any>(`/analyses/${id}/review`, { method: 'POST', body: JSON.stringify({ approved, ...(reason?.trim() ? { reason: reason.trim() } : {}) }) }) },
     async reviewBatch(analysisIds: string[], approved: boolean, reason?: string) { return request<{ succeeded: Array<{ id: string; status: string }>; failed: Array<{ id: string; message: string }> }>('/analyses/review-batch', { method: 'POST', body: JSON.stringify({ analysisIds, approved, ...(reason?.trim() ? { reason: reason.trim() } : {}) }) }) },
+    async getReviewDetail(meetingId: string) { return request<ReviewDetail>(`/meetings/${meetingId}/review`) },
+    async saveReviewDraft(analysisId: string, draft: ReviewDraft) { return request<ReviewDraft>(`/analyses/${analysisId}/draft`, { method: 'PUT', body: JSON.stringify(draft) }) },
     async reanalyze(id: string) { return request<any>(`/analyses/${id}/reanalyze`, { method: 'POST' }) },
   }
 }

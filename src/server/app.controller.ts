@@ -1,7 +1,7 @@
-import { Body, Controller, Delete, Get, Headers, Inject, Param, Patch, Post, UploadedFile, UseInterceptors } from '@nestjs/common'
+import { Body, Controller, Delete, Get, Headers, Inject, Param, Patch, Post, Put, UploadedFile, UseInterceptors } from '@nestjs/common'
 import { FileInterceptor } from '@nestjs/platform-express'
 import { AppService } from './app.service'
-import { CreateMeetingDto, CreateProjectDto, CreateTaskDto, DesensitizationRuleDto, FeedbackDto, ImportMeetingDto, LoginDto, ManagedUserDto, ManagedUserUpdateDto, ProjectMemberDto, ProjectMemberUpdateDto, RegisterDto, ResetPasswordDto, ReviewBatchDto, ReviewDto, SystemSettingsDto, TagDto, TaskNoteDto, UpdateDesensitizationRuleDto, UpdateManagedTaskDto, UpdateProjectDto, UpdateTagDto, UpdateTaskDto } from './dtos'
+import { CreateMeetingDto, CreateProjectDto, CreateTaskDto, DesensitizationRuleDto, FeedbackDto, ImportMeetingDto, LoginDto, ManagedUserDto, ManagedUserUpdateDto, ProjectMemberDto, ProjectMemberUpdateDto, RegisterDto, ResetPasswordDto, ReviewBatchDto, ReviewDto, ReviewDraftDto, SystemSettingsDto, TagDto, TaskNoteDto, UpdateDesensitizationRuleDto, UpdateManagedTaskDto, UpdateProjectDto, UpdateTagDto, UpdateTaskDto } from './dtos'
 import { extractMeetingFileContent, type UploadedMeetingFile } from './document-import'
 
 @Controller('api')
@@ -59,9 +59,11 @@ export class AppController {
   @Post('meetings/:id/versions/:versionId/restore') async restoreMeetingVersion(@Headers('authorization') authorization: string | undefined, @Param('id') id: string, @Param('versionId') versionId: string) { return this.app.restoreMeetingVersion(await this.user(authorization), id, versionId) }
   @Post('meetings/:id/analyze') async analyzeMeeting(@Headers('authorization') authorization: string | undefined, @Param('id') id: string) { return this.app.analyzeMeeting(await this.user(authorization), id) }
   @Get('meetings/:id/desensitization-logs') async desensitizationLogs(@Headers('authorization') authorization: string | undefined, @Param('id') id: string) { return this.app.listMeetingDesensitizationLogs(await this.user(authorization), id) }
+  @Get('meetings/:id/review') async reviewDetail(@Headers('authorization') authorization: string | undefined, @Param('id') id: string) { return this.app.reviewDetail(await this.user(authorization), id) }
   @Get('analyses') async analyses(@Headers('authorization') authorization?: string) { return this.app.listAnalyses(await this.user(authorization)) }
   @Post('analyses/review-batch') async reviewBatch(@Headers('authorization') authorization: string | undefined, @Body() body: ReviewBatchDto) { return this.app.reviewAnalyses(await this.user(authorization), body.analysisIds, body.approved, body.reason) }
   @Post('analyses/:id/review') async review(@Headers('authorization') authorization: string | undefined, @Param('id') id: string, @Body() body: ReviewDto) { return this.app.reviewAnalysis(await this.user(authorization), id, body.approved, body.reason) }
+  @Put('analyses/:id/draft') async saveReviewDraft(@Headers('authorization') authorization: string | undefined, @Param('id') id: string, @Body() body: ReviewDraftDto) { return this.app.saveReviewDraft(await this.user(authorization), id, body) }
   @Post('analyses/:id/reanalyze') async reanalyze(@Headers('authorization') authorization: string | undefined, @Param('id') id: string) { return this.app.reanalyzeRejectedAnalysis(await this.user(authorization), id) }
   @Get('risks') async risks(@Headers('authorization') authorization?: string) { return this.app.risks(await this.user(authorization)) }
   @Patch('risks/:id/resolve') async resolveRisk(@Headers('authorization') authorization: string | undefined, @Param('id') id: string) { return this.app.resolveRisk(await this.user(authorization), id) }

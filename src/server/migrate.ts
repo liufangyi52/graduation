@@ -95,6 +95,15 @@ export async function migrate() {
     CONSTRAINT fk_analyses_meeting FOREIGN KEY (meeting_id) REFERENCES meetings(id) ON DELETE CASCADE,
     CONSTRAINT fk_analyses_requester FOREIGN KEY (requested_by) REFERENCES users(id)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
+  await pool.query(`CREATE TABLE IF NOT EXISTS ai_analysis_drafts (
+    analysis_id CHAR(36) PRIMARY KEY,
+    draft_json JSON NOT NULL,
+    updated_by CHAR(36) NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    CONSTRAINT fk_analysis_drafts_analysis FOREIGN KEY (analysis_id) REFERENCES ai_analyses(id) ON DELETE CASCADE,
+    CONSTRAINT fk_analysis_drafts_updater FOREIGN KEY (updated_by) REFERENCES users(id)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
   await pool.query(`CREATE TABLE IF NOT EXISTS meeting_versions (
     id CHAR(36) PRIMARY KEY,
     meeting_id CHAR(36) NOT NULL,

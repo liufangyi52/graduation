@@ -1,5 +1,5 @@
 import { Type } from 'class-transformer'
-import { ArrayMaxSize, ArrayMinSize, IsArray, IsBoolean, IsEmail, IsIn, IsInt, IsOptional, IsString, IsUUID, Max, MaxLength, Min, MinLength } from 'class-validator'
+import { ArrayMaxSize, ArrayMinSize, IsArray, IsBoolean, IsEmail, IsIn, IsInt, IsOptional, IsString, IsUUID, Max, MaxLength, Min, MinLength, ValidateNested } from 'class-validator'
 
 const roles = ['manager', 'member', 'admin', 'auditor'] as const
 const statuses = ['todo', 'in_progress', 'completed', 'closed'] as const
@@ -73,11 +73,26 @@ export class CreateMeetingDto {
 
 export class ReviewDto {
   @IsBoolean() approved!: boolean
-  @IsOptional() @IsString() @MinLength(1) reason?: string
+  @IsOptional() @IsString() @MinLength(1) @MaxLength(500) reason?: string
 }
 
 export class ReviewBatchDto extends ReviewDto {
   @IsArray() @ArrayMinSize(1) @ArrayMaxSize(50) @IsUUID('4', { each: true }) analysisIds!: string[]
+}
+
+export class ReviewDraftTaskDto {
+  @IsString() @MinLength(1) @MaxLength(180) title!: string
+  @IsOptional() @IsString() @MaxLength(4000) description?: string
+  @IsOptional() @IsString() @MaxLength(320) owner_email?: string
+  @IsOptional() @IsString() due_date?: string
+  @IsIn(priorities) priority!: typeof priorities[number]
+}
+
+export class ReviewDraftDto {
+  @IsString() @MinLength(1) @MaxLength(4000) summary!: string
+  @IsArray() @ArrayMaxSize(50) @IsString({ each: true }) decisions!: string[]
+  @IsArray() @ArrayMinSize(1) @ArrayMaxSize(50) @ValidateNested({ each: true }) @Type(() => ReviewDraftTaskDto) tasks!: ReviewDraftTaskDto[]
+  @IsArray() @ArrayMaxSize(50) risks!: Array<{ title: string; description?: string; level: 'low' | 'medium' | 'high' }>
 }
 
 export class CreateTaskDto {
