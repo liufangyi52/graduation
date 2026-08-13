@@ -75,6 +75,94 @@ export class AppService {
     return { id, ...input, ownerId: user.id, status: 'active' }
   }
 
+  async updateProject(user: SessionUser, projectId: string, input: { name?: string; code?: string; description?: string; endDate?: string | null; status?: 'active' | 'paused' | 'archived' }) {
+    await this.assertProjectManager(user, projectId)
+    const fields: string[] = []
+    const values: Array<string | null> = []
+    const result: { id: string; name?: string; code?: string; description?: string; endDate?: string | null; status?: string } = { id: projectId }
+    if (input.name !== undefined) { if (!input.name.trim()) throw new BadRequestException('Project name is required'); fields.push('name=?'); values.push(input.name.trim()); result.name = input.name.trim() }
+    if (input.code !== undefined) { if (!input.code.trim()) throw new BadRequestException('Project code is required'); fields.push('code=?'); values.push(input.code.trim()); result.code = input.code.trim() }
+    if (input.description !== undefined) { fields.push('description=?'); values.push(input.description?.trim() || null); result.description = input.description?.trim() || undefined }
+    if (input.endDate !== undefined) { fields.push('end_date=?'); values.push(input.endDate || null); result.endDate = input.endDate || null }
+    if (input.status !== undefined) { fields.push('status=?'); values.push(input.status); result.status = input.status }
+    if (!fields.length) throw new BadRequestException('No project changes supplied')
+    await pool.execute(`UPDATE projects SET ${fields.join(',')} WHERE id=? AND deleted_at IS NULL`, [...values, projectId])
+    await this.audit(user.id, 'project.updated', 'project', projectId, { fields: Object.keys(input).filter((key) => input[key as keyof typeof input] !== undefined) })
+    return result
+  }
+
+  async softDeleteProject(user: SessionUser, projectId: string) {
+    await this.assertProjectManager(user, projectId)
+    const [result] = await pool.execute<any>('UPDATE projects SET deleted_at=CURRENT_TIMESTAMP,deleted_by=? WHERE id=? AND deleted_at IS NULL', [user.id, projectId])
+    if (!result.affectedRows) throw new BadRequestException('Project is already deleted')
+    await this.audit(user.id, 'project.deleted', 'project', projectId)
+    return { id: projectId, deleted: true }
+  }
+
+  async restoreProject(user: SessionUser, projectId: string) {
+    if (user.role !== 'manager') throw new ForbiddenException('Only managers can perform this action')
+    const [result] = await pool.execute<any>('UPDATE projects SET deleted_at=NULL,deleted_by=NULL WHERE id=? AND owner_id=? AND deleted_at IS NOT NULL', [projectId, user.id])
+    if (!result.affectedRows) throw new BadRequestException('Deleted project does not exist')
+    await this.audit(user.id, 'project.restored', 'project', projectId)
+    return { id: projectId, restored: true }
+  }
+
+  async deletedProjects(user: SessionUser) {
+    if (user.role !== 'manager') throw new ForbiddenException('Only managers can perform this action')
+    const [rows] = await pool.query<any[]>('SELECT id,name,code,status,end_date,deleted_at FROM projects WHERE owner_id=? AND deleted_at IS NOT NULL ORDER BY deleted_at DESC', [user.id])
+    return rows
+  }
+
+  async listProjectTags(user: SessionUser, projectId: string) {
+    await this.assertProjectViewer(user, projectId)
+    const [rows] = await pool.query<any[]>('SELECT t.id,t.project_id,t.name,t.created_at,EXISTS(SELECT 1 FROM project_tag_links l WHERE l.project_id=? AND l.tag_id=t.id) linked FROM project_tags t WHERE t.project_id=? ORDER BY t.created_at ASC', [projectId, projectId])
+    return rows
+  }
+
+  async createProjectTag(user: SessionUser, projectId: string, input: { name: string }) {
+    await this.assertProjectManager(user, projectId)
+    if (!input.name?.trim()) throw new BadRequestException('Tag name is required')
+    const id = randomUUID()
+    const name = input.name.trim()
+    await pool.execute('INSERT INTO project_tags (id,project_id,name,created_by) VALUES (?,?,?,?)', [id, projectId, name, user.id])
+    await this.audit(user.id, 'project.tag_created', 'project_tag', id, { projectId, name })
+    return { id, projectId, name }
+  }
+
+  async updateProjectTag(user: SessionUser, projectId: string, tagId: string, input: { name: string }) {
+    await this.assertProjectManager(user, projectId)
+    if (!input.name?.trim()) throw new BadRequestException('Tag name is required')
+    const [result] = await pool.execute<any>('UPDATE project_tags SET name=? WHERE id=? AND project_id=?', [input.name.trim(), tagId, projectId])
+    if (!result.affectedRows) throw new BadRequestException('Project tag does not exist')
+    await this.audit(user.id, 'project.tag_updated', 'project_tag', tagId, { projectId, name: input.name.trim() })
+    return { id: tagId, projectId, name: input.name.trim() }
+  }
+
+  async deleteProjectTag(user: SessionUser, projectId: string, tagId: string) {
+    await this.assertProjectManager(user, projectId)
+    const [result] = await pool.execute<any>('DELETE FROM project_tags WHERE id=? AND project_id=?', [tagId, projectId])
+    if (!result.affectedRows) throw new BadRequestException('Project tag does not exist')
+    await this.audit(user.id, 'project.tag_deleted', 'project_tag', tagId, { projectId })
+    return { id: tagId, deleted: true }
+  }
+
+  async linkProjectTag(user: SessionUser, projectId: string, tagId: string) {
+    await this.assertProjectManager(user, projectId)
+    const [tags] = await pool.query<any[]>('SELECT id FROM project_tags WHERE id=? AND project_id=?', [tagId, projectId])
+    if (!tags[0]) throw new BadRequestException('Project tag does not exist')
+    await pool.execute('INSERT IGNORE INTO project_tag_links (project_id,tag_id) VALUES (?,?)', [projectId, tagId])
+    await this.audit(user.id, 'project.tag_linked', 'project_tag', tagId, { projectId })
+    return { projectId, tagId, linked: true }
+  }
+
+  async unlinkProjectTag(user: SessionUser, projectId: string, tagId: string) {
+    await this.assertProjectManager(user, projectId)
+    const [result] = await pool.execute<any>('DELETE FROM project_tag_links WHERE project_id=? AND tag_id=?', [projectId, tagId])
+    if (!result.affectedRows) throw new BadRequestException('Project tag link does not exist')
+    await this.audit(user.id, 'project.tag_unlinked', 'project_tag', tagId, { projectId })
+    return { projectId, tagId, linked: false }
+  }
+
   async listProjectMembers(user: SessionUser, projectId: string) {
     if (user.role === 'manager') await this.assertProjectManager(user, projectId)
     else if (user.role === 'member') {
@@ -276,8 +364,17 @@ export class AppService {
 
   private async assertProjectManager(user: SessionUser, projectId: string) {
     if (user.role !== 'manager') throw new ForbiddenException('Only managers can perform this action')
-    const [rows] = await pool.query<any[]>('SELECT owner_id FROM projects WHERE id=?', [projectId])
+    const [rows] = await pool.query<any[]>('SELECT owner_id FROM projects WHERE id=? AND deleted_at IS NULL', [projectId])
     if (!rows[0] || rows[0].owner_id !== user.id) throw new ForbiddenException('You do not manage this project')
+  }
+
+  private async assertProjectViewer(user: SessionUser, projectId: string) {
+    if (user.role === 'manager') return this.assertProjectManager(user, projectId)
+    if (user.role === 'member') {
+      const [rows] = await pool.query<any[]>('SELECT pm.project_id FROM project_members pm JOIN projects p ON p.id=pm.project_id WHERE pm.project_id=? AND pm.user_id=? AND p.deleted_at IS NULL', [projectId, user.id])
+      if (rows[0]) return
+    }
+    throw new ForbiddenException('You cannot view this project')
   }
 
   private async desensitizedMeetingContent(content: string) {

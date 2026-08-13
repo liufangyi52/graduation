@@ -1,7 +1,7 @@
 import { Body, Controller, Delete, Get, Headers, Inject, Param, Patch, Post, UploadedFile, UseInterceptors } from '@nestjs/common'
 import { FileInterceptor } from '@nestjs/platform-express'
 import { AppService } from './app.service'
-import { CreateMeetingDto, CreateProjectDto, FeedbackDto, ImportMeetingDto, LoginDto, ManagedUserDto, ManagedUserUpdateDto, ProjectMemberDto, ProjectMemberUpdateDto, RegisterDto, ResetPasswordDto, ReviewDto, SystemSettingsDto, UpdateTaskDto } from './dtos'
+import { CreateMeetingDto, CreateProjectDto, FeedbackDto, ImportMeetingDto, LoginDto, ManagedUserDto, ManagedUserUpdateDto, ProjectMemberDto, ProjectMemberUpdateDto, RegisterDto, ResetPasswordDto, ReviewDto, SystemSettingsDto, TagDto, UpdateProjectDto, UpdateTagDto, UpdateTaskDto } from './dtos'
 import { extractMeetingFileContent, type UploadedMeetingFile } from './document-import'
 
 @Controller('api')
@@ -14,7 +14,17 @@ export class AppController {
   @Post('auth/login') login(@Body() body: LoginDto) { return this.app.login(body.email, body.password) }
   @Get('auth/me') async me(@Headers('authorization') authorization?: string) { return this.app.databaseUser(authorization?.replace(/^Bearer\s+/i, '')) }
   @Get('projects') async projects(@Headers('authorization') authorization?: string) { return this.app.projects(await this.user(authorization)) }
+  @Get('projects/deleted') async deletedProjects(@Headers('authorization') authorization?: string) { return this.app.deletedProjects(await this.user(authorization)) }
   @Post('projects') async createProject(@Headers('authorization') authorization: string | undefined, @Body() body: CreateProjectDto) { return this.app.createProject(await this.user(authorization), body) }
+  @Patch('projects/:id') async updateProject(@Headers('authorization') authorization: string | undefined, @Param('id') id: string, @Body() body: UpdateProjectDto) { return this.app.updateProject(await this.user(authorization), id, body) }
+  @Delete('projects/:id') async deleteProject(@Headers('authorization') authorization: string | undefined, @Param('id') id: string) { return this.app.softDeleteProject(await this.user(authorization), id) }
+  @Post('projects/:id/restore') async restoreProject(@Headers('authorization') authorization: string | undefined, @Param('id') id: string) { return this.app.restoreProject(await this.user(authorization), id) }
+  @Get('projects/:id/tags') async projectTags(@Headers('authorization') authorization: string | undefined, @Param('id') id: string) { return this.app.listProjectTags(await this.user(authorization), id) }
+  @Post('projects/:id/tags') async createProjectTag(@Headers('authorization') authorization: string | undefined, @Param('id') id: string, @Body() body: TagDto) { return this.app.createProjectTag(await this.user(authorization), id, body) }
+  @Patch('projects/:id/tags/:tagId') async updateProjectTag(@Headers('authorization') authorization: string | undefined, @Param('id') id: string, @Param('tagId') tagId: string, @Body() body: UpdateTagDto) { return this.app.updateProjectTag(await this.user(authorization), id, tagId, body) }
+  @Delete('projects/:id/tags/:tagId') async deleteProjectTag(@Headers('authorization') authorization: string | undefined, @Param('id') id: string, @Param('tagId') tagId: string) { return this.app.deleteProjectTag(await this.user(authorization), id, tagId) }
+  @Post('projects/:id/tags/:tagId/link') async linkProjectTag(@Headers('authorization') authorization: string | undefined, @Param('id') id: string, @Param('tagId') tagId: string) { return this.app.linkProjectTag(await this.user(authorization), id, tagId) }
+  @Delete('projects/:id/tags/:tagId/link') async unlinkProjectTag(@Headers('authorization') authorization: string | undefined, @Param('id') id: string, @Param('tagId') tagId: string) { return this.app.unlinkProjectTag(await this.user(authorization), id, tagId) }
   @Get('projects/:id/members') async projectMembers(@Headers('authorization') authorization: string | undefined, @Param('id') id: string) { return this.app.listProjectMembers(await this.user(authorization), id) }
   @Get('projects/:id/member-candidates') async projectMemberCandidates(@Headers('authorization') authorization: string | undefined, @Param('id') id: string) { return this.app.projectMemberCandidates(await this.user(authorization), id) }
   @Post('projects/:id/members') async addProjectMember(@Headers('authorization') authorization: string | undefined, @Param('id') id: string, @Body() body: ProjectMemberDto) { return this.app.addProjectMember(await this.user(authorization), id, body.userId, body.projectRole) }
