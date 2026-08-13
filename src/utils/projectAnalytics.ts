@@ -68,8 +68,9 @@ function calendarDate(value: string): string {
 }
 
 export function buildProjectAnalytics(input: ProjectAnalyticsInput, today: string): ProjectAnalytics {
+  const normalizedToday = calendarDate(today)
   const completedTasks = input.tasks.filter((task) => task.status === 'completed')
-  const overdueTasks = input.tasks.filter((task) => task.dueDate && calendarDate(task.dueDate) < today && task.status !== 'completed' && task.status !== 'closed')
+  const overdueTasks = input.tasks.filter((task) => task.dueDate && calendarDate(task.dueDate) < normalizedToday && task.status !== 'completed' && task.status !== 'closed')
   const openRisks = input.risks.filter((risk) => risk.status === 'open')
   const completionDates = new Map<string, number>()
 

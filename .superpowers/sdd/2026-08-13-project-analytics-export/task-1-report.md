@@ -58,3 +58,12 @@ Outcome: passed, 36 test files and 104 tests.
 ## Commit
 
 `6a79cf9 feat: add project analytics helper`
+
+## Review Fix
+
+Follow-up review identified that `today` could include an ISO timestamp while task due dates were normalized to calendar dates, causing tasks due today to be counted as overdue. The helper now normalizes `today` before comparison. Added a regression test for `dueDate: '2026-08-13'` and `today: '2026-08-13T00:00:00Z'`.
+
+Verification after the fix:
+
+- `npm test -- tests/project-analytics.spec.ts`: 3 tests passed.
+- `npm test`: 36 test files and 105 tests passed.

@@ -45,3 +45,11 @@ it('returns zero completion rate and empty groups for a project without tasks or
     undatedTasks: [],
   })
 })
+
+it('does not mark a task due today as overdue when today is an ISO timestamp', () => {
+  const analytics = buildProjectAnalytics({
+    tasks: [{ id: 'today', title: 'Due today', status: 'in_progress', createdAt: '2026-08-01', dueDate: '2026-08-13' }],
+    risks: [],
+  }, '2026-08-13T00:00:00Z')
+  expect(analytics.metrics.overdueTasks).toBe(0)
+})
