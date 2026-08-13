@@ -26,6 +26,12 @@ it('embeds texts through SiliconFlow using the configured model and preserves re
   })
 })
 
+it('requires an explicit non-empty embedding model before reporting configured', () => {
+  expect(new SiliconFlowEmbeddingProvider({ apiKey }).isConfigured()).toBe(false)
+  expect(new SiliconFlowEmbeddingProvider({ apiKey, model: '   ' }).isConfigured()).toBe(false)
+  expect(new SiliconFlowEmbeddingProvider({ apiKey, model: 'Qwen/Qwen3-Embedding-4B' }).isConfigured()).toBe(true)
+})
+
 it('rejects an embedding response with a wrong vector count without exposing provider data or credentials', async () => {
   vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response({ data: [{ embedding: vector }], error: { message: 'provider secret body' } })))
   const provider = new SiliconFlowEmbeddingProvider({ apiKey })

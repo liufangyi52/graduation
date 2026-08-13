@@ -1,6 +1,9 @@
 import { afterEach, expect, it, vi } from 'vitest'
 import { AnalysisExecutionError, AnalysisRunner } from '../src/server/analysis-runner'
 import { DeepSeekService, type MeetingAnalysis } from '../src/server/deepseek.service'
+import { SiliconFlowEmbeddingProvider } from '../src/server/embedding-provider'
+import { RagIndexService } from '../src/server/rag-index.service'
+import type { VectorPoint, VectorSearchResult, VectorStore } from '../src/server/vector-store'
 
 afterEach(() => vi.unstubAllGlobals())
 
@@ -26,6 +29,20 @@ const ragInput = {
   meetingId: 'meeting-1',
   versionId: 'version-1',
   desensitizedContent: '[PHONE]',
+}
+
+class CountingVectorStore implements VectorStore {
+  ensured = 0
+  upserted = 0
+  searched = 0
+  isConfigured() { return true }
+  async ensureCollection() { this.ensured += 1 }
+  async upsert(_points: VectorPoint[]) { this.upserted += 1 }
+  async search(_vector: number[], _query: { projectId: string; excludedVersionId: string; limit: number }): Promise<VectorSearchResult[]> {
+    this.searched += 1
+    return []
+  }
+  async health() { return true }
 }
 
 it('returns a manual-review draft without calling the provider', async () => {
@@ -87,6 +104,44 @@ it('runs one structured extraction and reports unavailable retrieval for RAG mod
   expect(provider.plan).not.toHaveBeenCalled()
   expect(provider.analyzeWithContext).not.toHaveBeenCalled()
   expect(rag.retrieve).not.toHaveBeenCalled()
+})
+
+it('keeps RAG as the one-call not-configured baseline when EMBEDDING_MODEL is absent', async () => {
+  const prior = {
+    apiKey: process.env.SILICONFLOW_API_KEY,
+    baseUrl: process.env.SILICONFLOW_BASE_URL,
+    model: process.env.EMBEDDING_MODEL,
+    qdrantUrl: process.env.QDRANT_URL,
+  }
+  process.env.SILICONFLOW_API_KEY = 'test-key'
+  process.env.SILICONFLOW_BASE_URL = 'https://example.test/v1'
+  process.env.QDRANT_URL = 'http://127.0.0.1:6333'
+  delete process.env.EMBEDDING_MODEL
+  const fetchMock = vi.fn()
+  vi.stubGlobal('fetch', fetchMock)
+
+  try {
+    const provider = createProvider()
+    const store = new CountingVectorStore()
+    const rag = new RagIndexService(new SiliconFlowEmbeddingProvider(), store)
+    const execution = await new AnalysisRunner(provider, rag).run(ragInput)
+
+    expect(rag.isConfigured()).toBe(false)
+    expect(execution.metadata).toMatchObject({ mode: 'rag', modelCallCount: 1, retrievalEnabled: false, retrievalStatus: 'not_configured' })
+    expect(provider.analyzeWithPlan).toHaveBeenCalledOnce()
+    expect(provider.analyzeWithContext).not.toHaveBeenCalled()
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(store).toMatchObject({ ensured: 0, upserted: 0, searched: 0 })
+  } finally {
+    if (prior.apiKey === undefined) delete process.env.SILICONFLOW_API_KEY
+    else process.env.SILICONFLOW_API_KEY = prior.apiKey
+    if (prior.baseUrl === undefined) delete process.env.SILICONFLOW_BASE_URL
+    else process.env.SILICONFLOW_BASE_URL = prior.baseUrl
+    if (prior.model === undefined) delete process.env.EMBEDDING_MODEL
+    else process.env.EMBEDDING_MODEL = prior.model
+    if (prior.qdrantUrl === undefined) delete process.env.QDRANT_URL
+    else process.env.QDRANT_URL = prior.qdrantUrl
+  }
 })
 
 it('retrieves project evidence and performs one contextual extraction for configured RAG', async () => {

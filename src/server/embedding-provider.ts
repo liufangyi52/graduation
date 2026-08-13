@@ -19,15 +19,17 @@ export class SiliconFlowEmbeddingProvider implements EmbeddingProvider {
   private readonly apiKey: string | undefined
   private readonly baseUrl: string
   private readonly model: string
+  private readonly configuredModel: string | undefined
 
   constructor(options: EmbeddingProviderOptions = {}) {
     this.apiKey = options.apiKey ?? process.env.SILICONFLOW_API_KEY
     this.baseUrl = (options.baseUrl ?? process.env.SILICONFLOW_BASE_URL ?? 'https://api.siliconflow.cn/v1').replace(/\/$/, '')
-    this.model = options.model ?? process.env.EMBEDDING_MODEL ?? 'Qwen/Qwen3-Embedding-4B'
+    this.configuredModel = options.model ?? process.env.EMBEDDING_MODEL
+    this.model = this.configuredModel?.trim() || 'Qwen/Qwen3-Embedding-4B'
   }
 
   isConfigured(): boolean {
-    return Boolean(this.apiKey)
+    return Boolean(this.apiKey?.trim() && this.configuredModel?.trim())
   }
 
   async embed(texts: string[]): Promise<number[][]> {
