@@ -19,6 +19,7 @@ import { calendarMonthDays, eventsForCalendarDate, formatCalendarDate, formatCal
 import { averageTaskProgress } from './utils/progress'
 import { selectDeadlineWatchTasks } from './utils/tasks'
 import { analysisStatusLabel, priorityLabel, projectRoleLabel, projectStatusLabel, riskLevelLabel, riskStatusLabel, systemRoleLabel, taskStatusLabel } from './utils/labels'
+import { createRagIndexRequestGuard } from './services/ragIndexRequestGuard'
 
 const props = defineProps<{ user: UserAccount; token: string }>()
 const emit = defineEmits<{ logout: [] }>()
@@ -29,6 +30,7 @@ const service = createWorkspaceService(props.token)
 const data = service.state
 const auth = createAuthService()
 const meetings = createMeetingService(props.token)
+const ragIndexRequestGuard = createRagIndexRequestGuard()
 const isAuditor = computed(() => props.user.role === 'auditor')
 if (props.user.role === 'auditor') {
   void service.loadNotifications().catch(() => flash('通知加载失败'))
@@ -225,58 +227,63 @@ const experimentRunCount = computed(() => experimentRows.value.reduce((total, it
 const ragIndexReady = computed(() => Boolean(!ragIndexStatusLoading.value && ragIndexStatus.value?.configured && ragIndexStatus.value.ready))
 
 async function loadRagIndexStatus(projectId: string) {
+  const request = ragIndexRequestGuard.issue('status', projectId)
   ragIndexStatus.value = null
   ragIndexStatusLoading.value = true
   try {
     const status = await meetings.ragIndexStatus(projectId)
-    if (experimentProjectId.value !== projectId) return
+    if (experimentProjectId.value !== projectId || !ragIndexRequestGuard.isCurrent(request)) return
     ragIndexStatus.value = status
   } catch {
-    if (experimentProjectId.value !== projectId) return
+    if (experimentProjectId.value !== projectId || !ragIndexRequestGuard.isCurrent(request)) return
     ragIndexStatus.value = null
   } finally {
-    if (experimentProjectId.value === projectId) ragIndexStatusLoading.value = false
+    if (experimentProjectId.value === projectId && ragIndexRequestGuard.isCurrent(request)) ragIndexStatusLoading.value = false
   }
 }
 
 async function loadExperimentSummary() {
   if (!canManageBusiness.value) return
   if (!experimentProjectId.value) {
+    ragIndexRequestGuard.select('')
     ragIndexStatus.value = null
     ragIndexStatusLoading.value = false
     ragIndexSyncing.value = false
     return
   }
   const projectId = experimentProjectId.value
+  ragIndexRequestGuard.select(projectId)
+  const request = ragIndexRequestGuard.issue('summary', projectId)
   experimentLoading.value = true
   ragIndexSyncing.value = false
   experimentNotice.value = ''
   void loadRagIndexStatus(projectId)
   try {
     const summary = await meetings.experimentSummary(projectId)
-    if (experimentProjectId.value !== projectId) return
+    if (experimentProjectId.value !== projectId || !ragIndexRequestGuard.isCurrent(request)) return
     experimentSummary.value = summary
   } catch (reason) {
-    if (experimentProjectId.value !== projectId) return
+    if (experimentProjectId.value !== projectId || !ragIndexRequestGuard.isCurrent(request)) return
     experimentSummary.value = null
     experimentNotice.value = reason instanceof Error ? reason.message : '实验汇总加载失败'
-  } finally { if (experimentProjectId.value === projectId) experimentLoading.value = false }
+  } finally { if (experimentProjectId.value === projectId && ragIndexRequestGuard.isCurrent(request)) experimentLoading.value = false }
 }
 
 async function syncRagIndex() {
   if (!canManageBusiness.value || !experimentProjectId.value || !ragIndexReady.value) return
   const projectId = experimentProjectId.value
+  const request = ragIndexRequestGuard.issue('sync', projectId)
   ragIndexSyncing.value = true
   experimentNotice.value = ''
   try {
     const result = await meetings.syncRagIndex(projectId)
-    if (experimentProjectId.value !== projectId) return
+    if (experimentProjectId.value !== projectId || !ragIndexRequestGuard.isCurrent(request)) return
     experimentNotice.value = `RAG 索引同步完成：${result.indexedChunks} 个脱敏分块`
     await loadRagIndexStatus(projectId)
   } catch (reason) {
-    if (experimentProjectId.value !== projectId) return
+    if (experimentProjectId.value !== projectId || !ragIndexRequestGuard.isCurrent(request)) return
     experimentNotice.value = reason instanceof Error ? reason.message : 'RAG 索引同步失败'
-  } finally { if (experimentProjectId.value === projectId) ragIndexSyncing.value = false }
+  } finally { if (experimentProjectId.value === projectId && ragIndexRequestGuard.isCurrent(request)) ragIndexSyncing.value = false }
 }
 
 watch(() => route.path, (path) => {
