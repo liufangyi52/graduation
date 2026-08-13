@@ -4,13 +4,16 @@ import { calendarDateFromApiValue } from '../utils/calendar'
 export type TaskState = 'todo' | 'in-progress' | 'completed' | 'closed'
 export type RiskLevel = 'high' | 'medium' | 'low'
 
-export interface Task { id: string; title: string; project: string; owner: string; due: string; priority: '紧急' | '高' | '中' | '低'; state: TaskState; progress: number; source?: 'ai-review' }
+export interface Task { id: string; title: string; description?: string; project: string; projectId?: string; owner: string; assigneeId?: string; due: string; priority: '紧急' | '高' | '中' | '低'; rawPriority?: 'low' | 'medium' | 'high' | 'urgent'; state: TaskState; progress: number; source?: 'ai-review' }
 export interface CalendarEvent { id: string; type: 'task' | 'meeting'; title: string; project: string; date: string; owner?: string; priority?: Task['priority']; state?: TaskState }
 export interface Project { id: string; name: string; code: string; owner: string; state: '进行中' | '暂停' | '已归档'; progress: number; deadline: string; members: number }
 export interface Review { id: string; meeting: string; project: string; mode: string; confidence: number; time: string; status: 'pending' | 'approved' | 'rejected' }
 export interface Risk { id: string; title: string; task: string; level: RiskLevel; owner: string; status: '待处理' | '跟进中' | '已处理' }
 export interface MemberFeedback { id: string; taskId: string; author: string; content: string; progress: number; createdAt: string }
 export interface ProjectMember { id: string; name: string; email: string; role: string; is_active: boolean; project_role: 'manager' | 'member' }
+export interface ProjectTag { id: string; project_id: string; name: string; linked: boolean }
+export interface DesensitizationRule { id: string; project_id: string; name: string; pattern: string; replacement: string; enabled: boolean }
+export interface TaskNote { id: string; task_id: string; author_id: string; author_name: string; content: string; created_at: string }
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:3000/api'
 const statusMap = { active: '进行中', paused: '暂停', archived: '已归档' } as const
@@ -26,7 +29,7 @@ export function createWorkspaceService(token: string) {
     return payload as T
   }
   const mapProject = (item: any): Project => ({ id: item.id, name: item.name, code: item.code, owner: item.owner_name, state: statusMap[item.status as keyof typeof statusMap] ?? '进行中', progress: Number(item.progress ?? 0), deadline: item.end_date ?? '未设置', members: Number(item.members ?? 0) })
-  const mapTask = (item: any): Task => ({ id: item.id, title: item.title, project: item.project_name, owner: item.assignee_name, due: item.due_date ?? '未设置', priority: priorityMap[item.priority as keyof typeof priorityMap] ?? '中', state: taskStateMap[item.status as keyof typeof taskStateMap] ?? 'todo', progress: Number(item.progress ?? 0) })
+  const mapTask = (item: any): Task => ({ id: item.id, title: item.title, description: item.description ?? undefined, project: item.project_name, projectId: item.project_id, owner: item.assignee_name, assigneeId: item.assignee_id, due: item.due_date ?? '未设置', priority: priorityMap[item.priority as keyof typeof priorityMap] ?? '中', rawPriority: item.priority, state: taskStateMap[item.status as keyof typeof taskStateMap] ?? 'todo', progress: Number(item.progress ?? 0) })
   const mapCalendarEvent = (item: any): CalendarEvent => ({
     id: item.id,
     type: item.type === 'meeting' ? 'meeting' : 'task',
@@ -59,6 +62,20 @@ export function createWorkspaceService(token: string) {
       state.projects.unshift(project)
       return project
     },
+    async updateProject(id: string, input: { name?: string; code?: string; description?: string; endDate?: string | null; status?: 'active' | 'paused' | 'archived' }) { return request(`/projects/${id}`, { method: 'PATCH', body: JSON.stringify(input) }) },
+    async deleteProject(id: string) { return request(`/projects/${id}`, { method: 'DELETE' }) },
+    async deletedProjects() { return request<any[]>('/projects/deleted') },
+    async restoreProject(id: string) { return request(`/projects/${id}/restore`, { method: 'POST' }) },
+    async listProjectTags(projectId: string) { return request<ProjectTag[]>(`/projects/${projectId}/tags`) },
+    async createProjectTag(projectId: string, name: string) { return request<ProjectTag>(`/projects/${projectId}/tags`, { method: 'POST', body: JSON.stringify({ name }) }) },
+    async updateProjectTag(projectId: string, tagId: string, name: string) { return request<ProjectTag>(`/projects/${projectId}/tags/${tagId}`, { method: 'PATCH', body: JSON.stringify({ name }) }) },
+    async deleteProjectTag(projectId: string, tagId: string) { return request(`/projects/${projectId}/tags/${tagId}`, { method: 'DELETE' }) },
+    async linkProjectTag(projectId: string, tagId: string) { return request(`/projects/${projectId}/tags/${tagId}/link`, { method: 'POST' }) },
+    async unlinkProjectTag(projectId: string, tagId: string) { return request(`/projects/${projectId}/tags/${tagId}/link`, { method: 'DELETE' }) },
+    async listDesensitizationRules(projectId: string) { return request<DesensitizationRule[]>(`/projects/${projectId}/desensitization-rules`) },
+    async createDesensitizationRule(projectId: string, input: Omit<DesensitizationRule, 'id' | 'project_id'>) { return request<DesensitizationRule>(`/projects/${projectId}/desensitization-rules`, { method: 'POST', body: JSON.stringify(input) }) },
+    async updateDesensitizationRule(projectId: string, ruleId: string, input: Partial<Omit<DesensitizationRule, 'id' | 'project_id'>>) { return request<DesensitizationRule>(`/projects/${projectId}/desensitization-rules/${ruleId}`, { method: 'PATCH', body: JSON.stringify(input) }) },
+    async deleteDesensitizationRule(projectId: string, ruleId: string) { return request(`/projects/${projectId}/desensitization-rules/${ruleId}`, { method: 'DELETE' }) },
     async listProjectMembers(projectId: string) { return request<ProjectMember[]>(`/projects/${projectId}/members`) },
     async projectMemberCandidates(projectId: string) { return request<Array<Pick<ProjectMember, 'id' | 'name' | 'email' | 'role'>>>(`/projects/${projectId}/member-candidates`) },
     async addProjectMember(projectId: string, userId: string, projectRole: 'manager' | 'member') { return request(`/projects/${projectId}/members`, { method: 'POST', body: JSON.stringify({ userId, projectRole }) }) },
@@ -75,6 +92,12 @@ export function createWorkspaceService(token: string) {
       const task = state.tasks.find((item) => item.id === id)
       if (task) { task.state = next; if (progress !== undefined) task.progress = progress }
     },
+    async createTask(input: { projectId: string; title: string; description?: string; assigneeId: string; priority: 'low' | 'medium' | 'high' | 'urgent'; status?: 'todo' | 'in_progress' | 'completed'; progress?: number; dueDate?: string | null }) { return request('/tasks', { method: 'POST', body: JSON.stringify(input) }) },
+    async updateManagedTask(id: string, input: { title?: string; description?: string; assigneeId?: string; priority?: 'low' | 'medium' | 'high' | 'urgent'; status?: 'todo' | 'in_progress' | 'completed'; progress?: number; dueDate?: string | null }) { return request(`/tasks/${id}/manage`, { method: 'PATCH', body: JSON.stringify(input) }) },
+    async closeTask(id: string) { return request(`/tasks/${id}/close`, { method: 'POST' }) },
+    async reopenTask(id: string, status: 'todo' | 'in_progress' = 'todo') { return request(`/tasks/${id}/reopen`, { method: 'POST', body: JSON.stringify({ status }) }) },
+    async listTaskNotes(id: string) { return request<TaskNote[]>(`/tasks/${id}/notes`) },
+    async addTaskNote(id: string, content: string) { return request<TaskNote>(`/tasks/${id}/notes`, { method: 'POST', body: JSON.stringify({ content }) }) },
     async submitFeedback(taskId: string, author: string, content: string, progress: number) {
       const item = await request<any>(`/tasks/${taskId}/feedbacks`, { method: 'POST', body: JSON.stringify({ content, progress }) })
       const feedback: MemberFeedback = { id: item.id, taskId, author, content, progress, createdAt: '刚刚' }
