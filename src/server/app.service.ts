@@ -7,6 +7,7 @@ import { assertFeedbackInput, assertManagedTaskInput, assertTaskStatusTransition
 import { DeepSeekService, normalizeAnalysis, type MeetingAnalysis } from './deepseek.service'
 import { applyDesensitization, type DesensitizationEntry } from './desensitization'
 import { buildProjectAnalytics } from '../utils/projectAnalytics'
+import { RedisCacheService } from './redis-cache.service'
 
 type Role = 'manager' | 'member' | 'admin' | 'auditor'
 type SessionUser = { id: string; role: Role; name: string; email: string; authVersion?: number }
@@ -20,7 +21,7 @@ export function normalizeStoredAnalysis(value: unknown): MeetingAnalysis {
 
 @Injectable()
 export class AppService {
-  constructor(private readonly deepseek: DeepSeekService) {}
+  constructor(private readonly deepseek: DeepSeekService, private readonly cache: RedisCacheService = new RedisCacheService()) {}
   async register(input: { role: Role; name: string; email: string; password: string }) {
     if (!canRegisterRole(input.role)) throw new ForbiddenException('Only member accounts can self-register')
     if (!['manager', 'member', 'admin', 'auditor'].includes(input.role)) throw new BadRequestException('无效角色')
@@ -60,13 +61,15 @@ export class AppService {
 
   async projects(user: SessionUser) {
     this.assertNotAuditorBusinessRead(user)
-    const sql = user.role === 'admin' || user.role === 'auditor'
+    return this.cache.getOrLoad(await this.cache.key('projects', user), async () => {
+      const sql = user.role === 'admin' || user.role === 'auditor'
       ? `SELECT p.id,p.name,p.code,p.description,p.status,p.start_date,p.end_date,u.name owner_name,COALESCE(mc.members,0) members,COALESCE(tc.progress,0) progress FROM projects p JOIN users u ON u.id=p.owner_id LEFT JOIN (SELECT project_id,COUNT(*) members FROM project_members GROUP BY project_id) mc ON mc.project_id=p.id LEFT JOIN (SELECT project_id,ROUND(AVG(progress)) progress FROM tasks GROUP BY project_id) tc ON tc.project_id=p.id WHERE p.deleted_at IS NULL ORDER BY p.created_at DESC`
       : user.role === 'manager'
         ? `SELECT p.id,p.name,p.code,p.description,p.status,p.start_date,p.end_date,u.name owner_name,COALESCE(mc.members,0) members,COALESCE(tc.progress,0) progress FROM projects p JOIN users u ON u.id=p.owner_id LEFT JOIN (SELECT project_id,COUNT(*) members FROM project_members GROUP BY project_id) mc ON mc.project_id=p.id LEFT JOIN (SELECT project_id,ROUND(AVG(progress)) progress FROM tasks GROUP BY project_id) tc ON tc.project_id=p.id WHERE p.owner_id=? AND p.deleted_at IS NULL ORDER BY p.created_at DESC`
         : `SELECT p.id,p.name,p.code,p.description,p.status,p.start_date,p.end_date,u.name owner_name,COALESCE(mc.members,0) members,COALESCE(tc.progress,0) progress FROM project_members pm JOIN projects p ON p.id=pm.project_id JOIN users u ON u.id=p.owner_id LEFT JOIN (SELECT project_id,COUNT(*) members FROM project_members GROUP BY project_id) mc ON mc.project_id=p.id LEFT JOIN (SELECT project_id,ROUND(AVG(progress)) progress FROM tasks GROUP BY project_id) tc ON tc.project_id=p.id WHERE pm.user_id=? AND p.deleted_at IS NULL ORDER BY p.created_at DESC`
-    const [rows] = await pool.query<any[]>(sql, user.role === 'manager' || user.role === 'member' ? [user.id] : [])
-    return rows
+      const [rows] = await pool.query<any[]>(sql, user.role === 'manager' || user.role === 'member' ? [user.id] : [])
+      return rows
+    })
   }
 
   async createProject(user: SessionUser, input: { name: string; code: string; description?: string; endDate?: string }) {
@@ -76,6 +79,7 @@ export class AppService {
     await pool.execute('INSERT INTO projects (id,name,code,description,owner_id,end_date) VALUES (?,?,?,?,?,?)', [id, input.name.trim(), input.code.trim(), input.description ?? null, user.id, input.endDate ?? null])
     await pool.execute('INSERT INTO project_members (project_id,user_id,project_role) VALUES (?,?,?)', [id, user.id, 'manager'])
     await this.audit(user.id, 'project.created', 'project', id, { code: input.code.trim() })
+    await this.invalidateBusinessReads()
     return { id, ...input, ownerId: user.id, status: 'active' }
   }
 
@@ -92,6 +96,7 @@ export class AppService {
     if (!fields.length) throw new BadRequestException('No project changes supplied')
     await pool.execute(`UPDATE projects SET ${fields.join(',')} WHERE id=? AND deleted_at IS NULL`, [...values, projectId])
     await this.audit(user.id, 'project.updated', 'project', projectId, { fields: Object.keys(input).filter((key) => input[key as keyof typeof input] !== undefined) })
+    await this.invalidateBusinessReads()
     return result
   }
 
@@ -100,6 +105,7 @@ export class AppService {
     const [result] = await pool.execute<any>('UPDATE projects SET deleted_at=CURRENT_TIMESTAMP,deleted_by=? WHERE id=? AND deleted_at IS NULL', [user.id, projectId])
     if (!result.affectedRows) throw new BadRequestException('Project is already deleted')
     await this.audit(user.id, 'project.deleted', 'project', projectId)
+    await this.invalidateBusinessReads()
     return { id: projectId, deleted: true }
   }
 
@@ -108,6 +114,7 @@ export class AppService {
     const [result] = await pool.execute<any>('UPDATE projects SET deleted_at=NULL,deleted_by=NULL WHERE id=? AND owner_id=? AND deleted_at IS NOT NULL', [projectId, user.id])
     if (!result.affectedRows) throw new BadRequestException('Deleted project does not exist')
     await this.audit(user.id, 'project.restored', 'project', projectId)
+    await this.invalidateBusinessReads()
     return { id: projectId, restored: true }
   }
 
@@ -119,7 +126,8 @@ export class AppService {
 
   async projectDetail(user: SessionUser, projectId: string) {
     this.assertNotAuditorBusinessRead(user)
-    const access = user.role === 'manager'
+    return this.cache.getOrLoad(await this.cache.key('project-detail', user, projectId), async () => {
+      const access = user.role === 'manager'
       ? 'p.owner_id=?'
       : user.role === 'member'
         ? 'EXISTS (SELECT 1 FROM project_members pm_access WHERE pm_access.project_id=p.id AND pm_access.user_id=?)'
@@ -146,7 +154,7 @@ export class AppService {
     const [risks] = await pool.query<any[]>('SELECT id,title,description,level,status,created_at,resolved_at FROM risks WHERE project_id=? ORDER BY created_at DESC', [projectId])
     const [members] = await pool.query<any[]>('SELECT u.id,u.name,u.email,u.role,u.is_active,pm.project_role FROM project_members pm JOIN users u ON u.id=pm.user_id WHERE pm.project_id=? ORDER BY pm.project_role DESC,u.name ASC', [projectId])
     const canEdit = user.role === 'manager' && project.owner_id === user.id
-    return {
+      return {
       project: { id: project.id, name: project.name, code: project.code, description: project.description, status: project.status, startDate: project.start_date, endDate: project.end_date, ownerId: project.owner_id, ownerName: project.owner_name, progress: Number(project.progress ?? 0) },
       tasks: tasks.map((task) => ({ ...task, assigneeName: task.assignee_name, createdAt: task.created_at, completedAt: task.completed_at ?? null, dueDate: task.due_date })),
       meetings: meetings.map((meeting) => ({ ...meeting, createdAt: meeting.created_at, versionCount: Number(meeting.version_count ?? 0), latestAnalysisStatus: meeting.latest_analysis_status ?? null })),
@@ -154,7 +162,8 @@ export class AppService {
       members,
       counts: { tasks: Number(project.task_count ?? tasks.length), completedTasks: Number(project.completed_task_count ?? tasks.filter((task) => task.status === 'completed').length), pendingReviews: Number(project.pending_review_count ?? 0), openRisks: Number(project.open_risk_count ?? risks.filter((risk) => risk.status === 'open').length), members: members.length },
       permissions: { canEdit, canCreateTask: canEdit, canManageMembers: canEdit, canManageRisks: canEdit },
-    }
+      }
+    })
   }
 
   async exportProjectData(user: SessionUser, projectId: string, kind: ExportKind) {
@@ -289,6 +298,7 @@ export class AppService {
     if (!users[0] || !users[0].is_active) throw new BadRequestException('Project member must be an active account')
     await pool.execute('INSERT INTO project_members (project_id,user_id,project_role) VALUES (?,?,?) ON DUPLICATE KEY UPDATE project_role=VALUES(project_role)', [projectId, userId, projectRole])
     await this.audit(user.id, 'project.member_added', 'project_member', userId, { projectId, projectRole })
+    await this.invalidateBusinessReads()
     return { projectId, userId, projectRole }
   }
 
@@ -299,6 +309,7 @@ export class AppService {
     const [result] = await pool.execute<any>('UPDATE project_members SET project_role=? WHERE project_id=? AND user_id=?', [projectRole, projectId, userId])
     if (!result.affectedRows) throw new BadRequestException('Project member does not exist')
     await this.audit(user.id, 'project.member_role_updated', 'project_member', userId, { projectId, projectRole })
+    await this.invalidateBusinessReads()
     return { projectId, userId, projectRole }
   }
 
@@ -309,14 +320,17 @@ export class AppService {
     const [result] = await pool.execute<any>('DELETE FROM project_members WHERE project_id=? AND user_id=?', [projectId, userId])
     if (!result.affectedRows) throw new BadRequestException('Project member does not exist')
     await this.audit(user.id, 'project.member_removed', 'project_member', userId, { projectId })
+    await this.invalidateBusinessReads()
     return { projectId, userId, removed: true }
   }
 
   async tasks(user: SessionUser) {
     this.assertNotAuditorBusinessRead(user)
-    const filter = user.role === 'member' ? 'WHERE t.assignee_id=? AND p.deleted_at IS NULL' : user.role === 'manager' ? 'WHERE p.owner_id=? AND p.deleted_at IS NULL' : 'WHERE p.deleted_at IS NULL'
-    const [rows] = await pool.query<any[]>(`SELECT t.id,t.title,t.description,t.priority,t.status,t.progress,t.due_date,p.id project_id,p.name project_name,u.id assignee_id,u.name assignee_name FROM tasks t JOIN projects p ON p.id=t.project_id JOIN users u ON u.id=t.assignee_id ${filter} ORDER BY t.updated_at DESC`, filter ? [user.id] : [])
-    return rows
+    return this.cache.getOrLoad(await this.cache.key('tasks', user), async () => {
+      const filter = user.role === 'member' ? 'WHERE t.assignee_id=? AND p.deleted_at IS NULL' : user.role === 'manager' ? 'WHERE p.owner_id=? AND p.deleted_at IS NULL' : 'WHERE p.deleted_at IS NULL'
+      const [rows] = await pool.query<any[]>(`SELECT t.id,t.title,t.description,t.priority,t.status,t.progress,t.due_date,p.id project_id,p.name project_name,u.id assignee_id,u.name assignee_name FROM tasks t JOIN projects p ON p.id=t.project_id JOIN users u ON u.id=t.assignee_id ${filter} ORDER BY t.updated_at DESC`, filter ? [user.id] : [])
+      return rows
+    })
   }
 
   async calendarEvents(user: SessionUser) {
@@ -355,6 +369,7 @@ export class AppService {
     await pool.execute('UPDATE tasks SET status=COALESCE(?,status), progress=COALESCE(?,progress) WHERE id=?', [status ?? null, progress ?? null, id])
     await this.ensureTaskDeadlineWarnings({ ...rows[0], status: status ?? rows[0].status })
     await this.audit(user.id, 'task.updated', 'task', id, { projectId: rows[0].project_id, status: status ?? null, progress: progress ?? null })
+    await this.invalidateBusinessReads()
     return { id, status, progress }
   }
 
@@ -384,6 +399,7 @@ export class AppService {
     await this.audit(user.id, 'task.feedback_created', 'task_feedback', id, { taskId, progress: input.progress })
     const [tasks] = await pool.query<any[]>('SELECT id,title,assignee_id,project_id,due_date,status FROM tasks WHERE id=?', [taskId])
     if (tasks[0]) await this.ensureTaskDeadlineWarnings(tasks[0])
+    await this.invalidateBusinessReads()
     return { id, taskId, authorId: user.id, ...input }
   }
 
@@ -469,6 +485,10 @@ export class AppService {
     await pool.execute('INSERT INTO audit_logs (id,actor_id,action,entity_type,entity_id,details) VALUES (?,?,?,?,?,?)', [randomUUID(), actorId, action, entityType, entityId, JSON.stringify(details)])
   }
 
+  private async invalidateBusinessReads() {
+    await this.cache.invalidateBusinessReads()
+  }
+
   private assertNotAuditorBusinessRead(user: SessionUser) {
     if (user.role === 'auditor') throw new ForbiddenException('Audit role cannot access project business data')
   }
@@ -510,12 +530,14 @@ export class AppService {
   async overdueTasks(user: SessionUser) {
     this.assertNotAuditorBusinessRead(user)
     if (user.role === 'admin') return []
-    const filter = user.role === 'manager' ? 'p.owner_id=?' : 't.assignee_id=?'
-    const [rows] = await pool.query<any[]>(`SELECT t.id,t.title,t.priority,t.status,t.progress,DATE_FORMAT(t.due_date,'%Y-%m-%d') due_date,p.name project_name,u.name assignee_name
+    return this.cache.getOrLoad(await this.cache.key('overdue-tasks', user), async () => {
+      const filter = user.role === 'manager' ? 'p.owner_id=?' : 't.assignee_id=?'
+      const [rows] = await pool.query<any[]>(`SELECT t.id,t.title,t.priority,t.status,t.progress,DATE_FORMAT(t.due_date,'%Y-%m-%d') due_date,p.name project_name,u.name assignee_name
       FROM tasks t JOIN projects p ON p.id=t.project_id JOIN users u ON u.id=t.assignee_id
       WHERE p.deleted_at IS NULL AND t.status NOT IN ('completed','closed') AND t.due_date < CURDATE() AND ${filter}
       ORDER BY t.due_date ASC,t.priority DESC LIMIT 20`, [user.id])
-    return rows
+      return rows
+    })
   }
 
   async createTask(user: SessionUser, input: { projectId: string; title: string; description?: string; assigneeId: string; priority: 'low' | 'medium' | 'high' | 'urgent'; status?: 'todo' | 'in_progress' | 'completed'; progress?: number; dueDate?: string | null }) {
@@ -534,6 +556,7 @@ export class AppService {
       await connection.commit()
     } catch (error) { await connection.rollback(); throw error } finally { connection.release() }
     await this.audit(user.id, 'task.created', 'task', id, { projectId: input.projectId, title: input.title.trim(), assigneeId: input.assigneeId, priority: input.priority, status, progress })
+    await this.invalidateBusinessReads()
     return { id, title: input.title.trim(), projectId: input.projectId, assigneeId: input.assigneeId, priority: input.priority, status, progress, dueDate: input.dueDate ?? null }
   }
 
@@ -544,6 +567,7 @@ export class AppService {
     await this.assertProjectManager(user, rows[0].project_id)
     await pool.execute('UPDATE tasks SET status="closed" WHERE id=?', [taskId])
     await this.audit(user.id, 'task.closed', 'task', taskId)
+    await this.invalidateBusinessReads()
     return { id: taskId, status: 'closed' }
   }
 
@@ -569,6 +593,7 @@ export class AppService {
     await pool.execute(`UPDATE tasks SET ${fields.join(',')} WHERE id=?`, [...values, taskId])
     if (input.assigneeId && input.assigneeId !== task.assignee_id) await pool.execute('INSERT INTO notifications (id,user_id,title,body,link) VALUES (?,?,?,?,?)', [randomUUID(), input.assigneeId, `已分配任务：${input.title?.trim() ?? task.title}`, '请查看任务详情并更新进度。', '/my-tasks'])
     await this.audit(user.id, 'task.updated', 'task', taskId, { fields: Object.keys(input).filter((key) => input[key as keyof typeof input] !== undefined), status: input.status ?? (input.progress === 100 ? 'completed' : null), progress: input.progress ?? null })
+    await this.invalidateBusinessReads()
     return { id: taskId, ...input }
   }
 
@@ -580,6 +605,7 @@ export class AppService {
     if (rows[0].status !== 'closed') throw new BadRequestException('Only closed tasks can be reopened')
     await pool.execute('UPDATE tasks SET status=? WHERE id=?', [status, taskId])
     await this.audit(user.id, 'task.reopened', 'task', taskId, { status })
+    await this.invalidateBusinessReads()
     return { id: taskId, status }
   }
 
@@ -697,6 +723,7 @@ export class AppService {
       await connection.execute('UPDATE meetings SET current_version_id=? WHERE id=?', [id, meetingId])
       await connection.commit()
       await this.audit(user.id, 'meeting.version_restored', 'meeting', meetingId, { versionNumber, sourceVersionId: versionId })
+      await this.invalidateBusinessReads()
       return { id, meetingId, versionNumber, sourceType: 'restore', originalContent: versions[0].original_content, desensitizedContent: desensitized.content }
     } catch (reason) {
       await connection.rollback()
@@ -733,6 +760,7 @@ export class AppService {
       connection.release()
     }
     await this.audit(user.id, 'meeting.created', 'meeting', id, { projectId: input.projectId, versionNumber: 1 })
+    await this.invalidateBusinessReads()
     return { id, ...input, versionId, status: 'created' }
   }
 
@@ -746,6 +774,7 @@ export class AppService {
       const result = await this.deepseek.analyze(rows[0].title, rows[0].desensitized_content ?? (await this.desensitizeForProject(rows[0].project_id, rows[0].content)).content)
       await pool.execute('UPDATE ai_analyses SET result_json=? WHERE id=?', [JSON.stringify(result), analysisId])
       await this.audit(user.id, 'meeting.analyzed', 'analysis', analysisId, { model: process.env.DEEPSEEK_MODEL ?? 'deepseek-chat' })
+      await this.invalidateBusinessReads()
       return { id: analysisId, meetingId, status: 'pending', result }
     } catch (reason) {
       const message = reason instanceof Error ? reason.message : 'DeepSeek analysis failed'
@@ -836,6 +865,7 @@ export class AppService {
       await connection.commit()
     } catch (reason) { await connection.rollback(); throw reason } finally { connection.release() }
     await this.audit(user.id, approved ? 'analysis.approved' : 'analysis.rejected', 'analysis', analysisId)
+    await this.invalidateBusinessReads()
     return { id: analysisId, status: approved ? 'approved' : 'rejected' }
   }
 
@@ -863,6 +893,7 @@ export class AppService {
       const result = await this.deepseek.analyze(source.title, source.desensitized_content ?? '')
       await pool.execute('UPDATE ai_analyses SET result_json=? WHERE id=?', [JSON.stringify(result), id])
       await this.audit(user.id, 'analysis.reanalyzed', 'analysis', id, { sourceAnalysisId: analysisId })
+      await this.invalidateBusinessReads()
       return { id, meetingId: source.meeting_id, status: 'pending', reanalysisOfId: analysisId, result }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'DeepSeek analysis failed'
@@ -873,12 +904,14 @@ export class AppService {
 
   async risks(user: SessionUser) {
     this.assertNotAuditorBusinessRead(user)
-    const [rows] = user.role === 'member'
+    return this.cache.getOrLoad(await this.cache.key('risks', user), async () => {
+      const [rows] = user.role === 'member'
       ? await pool.query<any[]>('SELECT r.*,u.name project_owner_name FROM risks r JOIN project_members pm ON pm.project_id=r.project_id JOIN projects p ON p.id=r.project_id JOIN users u ON u.id=p.owner_id WHERE pm.user_id=? AND p.deleted_at IS NULL ORDER BY r.created_at DESC', [user.id])
       : user.role === 'manager'
         ? await pool.query<any[]>('SELECT r.*,u.name project_owner_name FROM risks r JOIN projects p ON p.id=r.project_id JOIN users u ON u.id=p.owner_id WHERE p.owner_id=? AND p.deleted_at IS NULL ORDER BY r.created_at DESC', [user.id])
         : await pool.query<any[]>('SELECT r.*,u.name project_owner_name FROM risks r JOIN projects p ON p.id=r.project_id JOIN users u ON u.id=p.owner_id WHERE p.deleted_at IS NULL ORDER BY r.created_at DESC')
-    return rows
+      return rows
+    })
   }
 
   async resolveRisk(user: SessionUser, id: string) {
@@ -888,6 +921,7 @@ export class AppService {
     await this.assertProjectManager(user, rows[0].project_id)
     await pool.execute('UPDATE risks SET status="resolved",resolved_by=?,resolved_at=CURRENT_TIMESTAMP WHERE id=? AND status="open"', [user.id, id])
     await this.audit(user.id, 'risk.resolved', 'risk', id)
+    await this.invalidateBusinessReads()
     return { id, status: 'resolved' }
   }
 
@@ -913,6 +947,7 @@ export class AppService {
     const [result] = await pool.execute<any>('UPDATE projects SET status="archived" WHERE id=? AND status<>"archived"', [projectId])
     if (!result.affectedRows) throw new BadRequestException('Project does not exist or is already archived')
     await this.audit(user.id, 'project.archived', 'project', projectId)
+    await this.invalidateBusinessReads()
     return { id: projectId, status: 'archived' }
   }
 }
