@@ -1,7 +1,9 @@
 import { afterEach, expect, it, vi } from 'vitest'
+import { validate } from 'class-validator'
 import { createMeetingService } from '../src/services/meetingService'
 import { AppService } from '../src/server/app.service'
 import { pool } from '../src/server/database'
+import { ReviewDraftDto } from '../src/server/dtos'
 
 afterEach(() => vi.restoreAllMocks())
 
@@ -73,6 +75,37 @@ it('validates draft decisions, risks, owner email, and due date', async () => {
     .mockResolvedValueOnce([[{ owner_id: 'manager-1' }]] as any)
   const service = new AppService({} as any)
   await expect(service.saveReviewDraft(manager, 'analysis-1', { summary: 'x', decisions: [''], tasks: [{ title: 'Task', priority: 'low', owner_email: 'bad', due_date: 'tomorrow' }], risks: [{ title: '', level: 'high' }] } as any)).rejects.toThrow('Review draft is invalid')
+})
+
+it('saves a task-free manual draft while validating supplied structured items', async () => {
+  const manager = { id: 'manager-1', role: 'manager' as const, name: 'Manager', email: 'manager@example.com' }
+  vi.spyOn(pool, 'query')
+    .mockResolvedValueOnce([[{ project_id: 'project-1', status: 'pending' }]] as any)
+    .mockResolvedValueOnce([[{ owner_id: 'manager-1' }]] as any)
+  const execute = vi.spyOn(pool, 'execute').mockResolvedValue([] as any)
+
+  await expect(new AppService({} as any).saveReviewDraft(manager, 'analysis-1', { summary: 'No follow-up work', decisions: [], tasks: [], risks: [] })).resolves.toEqual({ summary: 'No follow-up work', decisions: [], tasks: [], risks: [] })
+  expect(execute).toHaveBeenCalledWith(expect.stringContaining('ai_analysis_drafts'), expect.arrayContaining([expect.stringContaining('No follow-up work')]))
+
+  const dto = Object.assign(new ReviewDraftDto(), { summary: 'No follow-up work', decisions: [], tasks: [], risks: [] })
+  expect(await validate(dto)).toHaveLength(0)
+})
+
+it('approves a manual analysis using a human-authored saved task', async () => {
+  const manager = { id: 'manager-1', role: 'manager' as const, name: 'Manager', email: 'manager@example.com' }
+  const connection = { beginTransaction: vi.fn(), commit: vi.fn(), rollback: vi.fn(), release: vi.fn(), execute: vi.fn(), query: vi.fn()
+    .mockResolvedValueOnce([[{ draft_json: JSON.stringify({ summary: 'Human summary', decisions: ['Ship'], tasks: [{ title: 'Human task', priority: 'medium' }], risks: [{ title: 'Schedule', level: 'low' }] }) }]])
+    .mockResolvedValueOnce([[{ owner_id: 'manager-1' }]]) }
+  vi.spyOn(pool, 'query')
+    .mockResolvedValueOnce([[{ id: 'analysis-1', mode: 'manual', project_id: 'project-1', status: 'pending', result_json: JSON.stringify({ summary: 'Manual review required', decisions: [], tasks: [], risks: [] }), requested_by: 'manager-1', meeting_title: 'Minutes' }]] as any)
+    .mockResolvedValueOnce([[{ owner_id: 'manager-1' }]] as any)
+  vi.spyOn(pool, 'getConnection').mockResolvedValue(connection as any)
+  vi.spyOn(pool, 'execute').mockResolvedValue([] as any)
+
+  await new AppService({} as any).reviewAnalysis(manager, 'analysis-1', true)
+
+  expect(connection.execute).toHaveBeenCalledWith(expect.stringContaining('INSERT INTO tasks'), expect.arrayContaining(['Human task', 'medium']))
+  expect(connection.execute).toHaveBeenCalledWith(expect.stringContaining('INSERT INTO risks'), expect.arrayContaining(['Schedule', 'low']))
 })
 
 it('sends review detail and draft payloads through the client service', async () => {

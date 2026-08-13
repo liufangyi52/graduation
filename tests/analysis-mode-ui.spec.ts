@@ -50,5 +50,6 @@ it('offers all modes at submission and retry, and limits the RAG warning to reco
 
 it('keeps approval controls pending-only', () => {
   expect(appSource).toContain("analysis.status === 'pending'")
-  expect(reviewSource).toContain("detail.analysis.status === 'rejected'")
+  expect(reviewSource).toContain("['failed', 'rejected'].includes(detail.analysis.status)")
+  expect(appSource).toContain("['failed', 'rejected'].includes(analysis.status)")
 })

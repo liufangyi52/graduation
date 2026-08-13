@@ -2,11 +2,13 @@ import { reactive } from 'vue'
 
 export interface MeetingRecord { id: string; projectId: string; title: string; content: string; createdAt: string }
 export type AnalysisMode = 'manual' | 'llm' | 'rag' | 'agent'
-export interface AnalysisExecutionMetadata { retrievalStatus?: string; [key: string]: unknown }
+export interface AnalysisExecutionMetadata { retrievalStatus?: string; plan?: string; [key: string]: unknown }
 export interface AnalysisRecord { id: string; meetingId: string; title: string; status: string; result: any; createdAt: string; mode: AnalysisMode; executionMetadata: AnalysisExecutionMetadata | null; durationMs: number; modelCallCount: number }
 export interface ExperimentSummaryMetric { runCount: number; pendingCount: number; failedCount: number; approvedCount: number; rejectedCount: number; totalDurationMs: number; averageDurationMs: number; totalModelCalls: number }
 export type ExperimentSummary = Record<AnalysisMode, ExperimentSummaryMetric>
-export interface ReviewDraft { summary: string; decisions: string[]; tasks: any[]; risks: any[] }
+export interface ReviewDraftTask { title: string; description?: string; owner_email?: string; due_date?: string; priority: 'low' | 'medium' | 'high' | 'urgent' }
+export interface ReviewDraftRisk { title: string; description?: string; level: 'low' | 'medium' | 'high' }
+export interface ReviewDraft { summary: string; decisions: string[]; tasks: ReviewDraftTask[]; risks: ReviewDraftRisk[] }
 export interface ReviewDetail { meeting: any; analysis: any; draft: ReviewDraft | null; evidence: Array<{ start: number; end: number; snippet: string }> }
 export interface MeetingVersionSummary { id: string; meetingId: string; versionNumber: number; sourceType: string; createdAt: string; current?: boolean }
 export interface MeetingVersion extends MeetingVersionSummary { originalContent: string; desensitizedContent: string }

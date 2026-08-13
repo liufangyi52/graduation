@@ -502,6 +502,7 @@ export class AppService {
       modelCallCount: metadata.modelCallCount,
       retrievalEnabled: metadata.retrievalEnabled,
       retrievalStatus: metadata.retrievalStatus,
+      ...(metadata.plan ? { plan: metadata.plan.slice(0, 2000) } : {}),
     }
   }
 
@@ -822,8 +823,8 @@ export class AppService {
   async listAnalyses(user: SessionUser) {
     this.assertNotAuditorBusinessRead(user)
     const managerFilter = user.role === 'admin' ? ' WHERE p.deleted_at IS NULL' : ' WHERE p.owner_id=? AND p.deleted_at IS NULL'
-    const [rows] = await pool.query<any[]>(`SELECT a.id,a.meeting_id,a.status,a.model,a.result_json,a.created_at,m.title,m.project_id FROM ai_analyses a JOIN meetings m ON m.id=a.meeting_id JOIN projects p ON p.id=m.project_id${managerFilter} ORDER BY a.created_at DESC`, managerFilter ? [user.id] : [])
-    return rows.map((row) => ({ ...row, result: row.result_json ? normalizeStoredAnalysis(row.result_json) : null }))
+    const [rows] = await pool.query<any[]>(`SELECT a.id,a.meeting_id,a.status,a.model,COALESCE(a.mode,'llm') mode,a.execution_metadata,a.duration_ms,a.model_call_count,a.result_json,a.created_at,m.title,m.project_id FROM ai_analyses a JOIN meetings m ON m.id=a.meeting_id JOIN projects p ON p.id=m.project_id${managerFilter} ORDER BY a.created_at DESC`, managerFilter ? [user.id] : [])
+    return rows.map((row) => ({ ...row, mode: row.mode ?? 'llm', result: row.result_json ? normalizeStoredAnalysis(row.result_json) : null }))
   }
 
   async reviewDetail(user: SessionUser, meetingId: string) {
@@ -836,9 +837,9 @@ export class AppService {
     const meeting = meetings[0]
     if (!meeting) throw new BadRequestException('Meeting does not exist')
     if (user.role !== 'admin') await this.assertProjectViewer(user, meeting.project_id)
-    const [analyses] = await pool.query<any[]>(`SELECT id,status,model,result_json,created_at,reviewed_at,rejection_reason,reanalysis_of_id FROM ai_analyses
+    const [analyses] = await pool.query<any[]>(`SELECT id,status,model,COALESCE(mode,'llm') mode,execution_metadata,duration_ms,model_call_count,result_json,created_at,reviewed_at,rejection_reason,reanalysis_of_id FROM ai_analyses
       WHERE meeting_id=?${user.role === 'member' ? " AND status='approved'" : ''} ORDER BY created_at DESC LIMIT 1`, [meetingId])
-    const analysis = analyses[0] ? { ...analyses[0], result: analyses[0].result_json ? normalizeStoredAnalysis(analyses[0].result_json) : null } : null
+    const analysis = analyses[0] ? { ...analyses[0], mode: analyses[0].mode ?? 'llm', result: analyses[0].result_json ? normalizeStoredAnalysis(analyses[0].result_json) : null } : null
     let draft: ReviewDraft | null = null
     if (analysis) {
       const [draftRows] = await pool.query<any[]>('SELECT draft_json FROM ai_analysis_drafts WHERE analysis_id=?', [analysis.id])
@@ -859,7 +860,7 @@ export class AppService {
     if (!rows[0]) throw new BadRequestException('Analysis does not exist')
     await this.assertProjectManager(user, rows[0].project_id)
     if (rows[0].status !== 'pending') throw new BadRequestException('Analysis has already been reviewed')
-    if (!draft || !draft.summary?.trim() || !Array.isArray(draft.decisions) || draft.decisions.some((item) => typeof item !== 'string' || !item.trim() || item.length > 4000) || !Array.isArray(draft.tasks) || draft.tasks.length < 1 || draft.tasks.length > 50 || !Array.isArray(draft.risks) || draft.risks.some((risk) => !risk?.title?.trim() || !['low', 'medium', 'high'].includes(risk.level) || (risk.description?.length ?? 0) > 4000)) throw new BadRequestException('Review draft is invalid')
+    if (!draft || !draft.summary?.trim() || !Array.isArray(draft.decisions) || draft.decisions.some((item) => typeof item !== 'string' || !item.trim() || item.length > 4000) || !Array.isArray(draft.tasks) || draft.tasks.length > 50 || !Array.isArray(draft.risks) || draft.risks.some((risk) => !risk?.title?.trim() || !['low', 'medium', 'high'].includes(risk.level) || (risk.description?.length ?? 0) > 4000)) throw new BadRequestException('Review draft is invalid')
     let normalized: ReviewDraft
     try { normalized = normalizeStoredAnalysis(draft) } catch (error) { throw new BadRequestException(error instanceof Error ? error.message : 'Review draft is invalid') }
     for (const task of normalized.tasks) {
@@ -921,7 +922,7 @@ export class AppService {
     const source = rows[0]
     if (!source) throw new BadRequestException('Analysis does not exist')
     await this.assertProjectManager(user, source.project_id)
-    if (source.status !== 'rejected') throw new BadRequestException('Only rejected analyses can be reanalyzed')
+    if (!['failed', 'rejected'].includes(source.status)) throw new BadRequestException('Only failed or rejected analyses can be reanalyzed')
     if (typeof source.desensitized_content !== 'string') throw new BadRequestException('Current meeting version does not have desensitized content')
     const id = randomUUID()
     const startedAt = new Date()
@@ -947,7 +948,7 @@ export class AppService {
     await this.assertProjectManager(user, projectId)
     const [rows] = await pool.query<any[]>(`SELECT COALESCE(a.mode,'llm') mode,COUNT(*) run_count,
       SUM(a.status='pending') pending_count,SUM(a.status='failed') failed_count,SUM(a.status='approved') approved_count,SUM(a.status='rejected') rejected_count,
-      COALESCE(SUM(a.duration_ms),0) total_duration_ms,COALESCE(SUM(a.model_call_count),0) total_model_calls
+      COALESCE(SUM(a.duration_ms),0) total_duration_ms,AVG(a.duration_ms) average_duration_ms,COALESCE(SUM(a.model_call_count),0) total_model_calls
       FROM ai_analyses a JOIN meetings m ON m.id=a.meeting_id WHERE m.project_id=? GROUP BY COALESCE(a.mode,'llm')`, [projectId])
     const empty = () => ({ runCount: 0, pendingCount: 0, failedCount: 0, approvedCount: 0, rejectedCount: 0, totalDurationMs: 0, averageDurationMs: 0, totalModelCalls: 0 })
     const summary: Record<AnalysisMode, ReturnType<typeof empty>> = { manual: empty(), llm: empty(), rag: empty(), agent: empty() }
@@ -956,7 +957,7 @@ export class AppService {
       if (!(mode in summary)) continue
       const runCount = Number(row.run_count ?? 0)
       const totalDurationMs = Number(row.total_duration_ms ?? 0)
-      summary[mode] = { runCount, pendingCount: Number(row.pending_count ?? 0), failedCount: Number(row.failed_count ?? 0), approvedCount: Number(row.approved_count ?? 0), rejectedCount: Number(row.rejected_count ?? 0), totalDurationMs, averageDurationMs: runCount ? totalDurationMs / runCount : 0, totalModelCalls: Number(row.total_model_calls ?? 0) }
+      summary[mode] = { runCount, pendingCount: Number(row.pending_count ?? 0), failedCount: Number(row.failed_count ?? 0), approvedCount: Number(row.approved_count ?? 0), rejectedCount: Number(row.rejected_count ?? 0), totalDurationMs, averageDurationMs: Number(row.average_duration_ms ?? 0), totalModelCalls: Number(row.total_model_calls ?? 0) }
     }
     return summary
   }

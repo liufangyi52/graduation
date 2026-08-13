@@ -98,7 +98,7 @@ export class ReviewDraftRiskDto {
 export class ReviewDraftDto {
   @IsString() @MinLength(1) @MaxLength(4000) summary!: string
   @IsArray() @ArrayMaxSize(50) @IsString({ each: true }) decisions!: string[]
-  @IsArray() @ArrayMinSize(1) @ArrayMaxSize(50) @ValidateNested({ each: true }) @Type(() => ReviewDraftTaskDto) tasks!: ReviewDraftTaskDto[]
+  @IsArray() @ArrayMaxSize(50) @ValidateNested({ each: true }) @Type(() => ReviewDraftTaskDto) tasks!: ReviewDraftTaskDto[]
   @IsArray() @ArrayMaxSize(50) @ValidateNested({ each: true }) @Type(() => ReviewDraftRiskDto) risks!: ReviewDraftRiskDto[]
 }
 
