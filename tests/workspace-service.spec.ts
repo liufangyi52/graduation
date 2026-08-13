@@ -41,6 +41,7 @@ it('maps server-calculated project progress instead of replacing it with zero', 
     .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }))
     .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }))
     .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }))
+    .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }))
   const service = createWorkspaceService('token')
 
   await service.load()

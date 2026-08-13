@@ -141,7 +141,7 @@ const pendingReviews = computed(() => meetings.state.analyses.filter((analysis) 
   time: analysis.createdAt,
   status: analysis.status,
 })))
-const dueTasks = computed(() => data.tasks.filter((task) => task.state !== 'completed').slice(0, 3))
+const dueTasks = computed(() => data.overdueTasks.slice(0, 3))
 const filteredProjects = computed(() => data.projects.filter((project) => {
   const matchesSearch = !search.value || `${project.name}${project.code}${project.owner}`.toLowerCase().includes(search.value.toLowerCase())
   const matchesState = projectStateFilter.value === 'all' || project.state === projectStateFilter.value
@@ -206,7 +206,7 @@ async function updateTask(task: Task, state: TaskState) {
   }
 }
 function statusLabel(status: TaskState) {
-  return { todo: '待处理', 'in-progress': '进行中', completed: '已完成' }[status]
+  return { todo: '待处理', 'in-progress': '进行中', completed: '已完成', closed: '已关闭' }[status]
 }
 function calendarTagClass(event: CalendarEvent) {
   if (event.type === 'meeting') return 'blue'

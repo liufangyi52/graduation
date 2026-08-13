@@ -1,7 +1,7 @@
 import { reactive } from 'vue'
 import { calendarDateFromApiValue } from '../utils/calendar'
 
-export type TaskState = 'todo' | 'in-progress' | 'completed'
+export type TaskState = 'todo' | 'in-progress' | 'completed' | 'closed'
 export type RiskLevel = 'high' | 'medium' | 'low'
 
 export interface Task { id: string; title: string; project: string; owner: string; due: string; priority: '紧急' | '高' | '中' | '低'; state: TaskState; progress: number; source?: 'ai-review' }
@@ -15,10 +15,10 @@ export interface ProjectMember { id: string; name: string; email: string; role: 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:3000/api'
 const statusMap = { active: '进行中', paused: '暂停', archived: '已归档' } as const
 const priorityMap = { urgent: '紧急', high: '高', medium: '中', low: '低' } as const
-const taskStateMap = { todo: 'todo', in_progress: 'in-progress', completed: 'completed' } as const
+const taskStateMap = { todo: 'todo', in_progress: 'in-progress', completed: 'completed', closed: 'closed' } as const
 
 export function createWorkspaceService(token: string) {
-  const state = reactive({ projects: [] as Project[], tasks: [] as Task[], calendarEvents: [] as CalendarEvent[], reviews: [] as Review[], risks: [] as Risk[], notifications: [] as { id: string; title: string; time: string; read: boolean; path: string }[], feedbacks: [] as MemberFeedback[], settings: { model: 'DeepSeek V3', mode: 'RAG 检索增强', desensitize: true } })
+  const state = reactive({ projects: [] as Project[], tasks: [] as Task[], overdueTasks: [] as Task[], calendarEvents: [] as CalendarEvent[], reviews: [] as Review[], risks: [] as Risk[], notifications: [] as { id: string; title: string; time: string; read: boolean; path: string }[], feedbacks: [] as MemberFeedback[], settings: { model: 'DeepSeek V3', mode: 'RAG 检索增强', desensitize: true } })
   const request = async <T>(path: string, init: RequestInit = {}) => {
     const response = await fetch(`${apiBaseUrl}${path}`, { ...init, headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, ...init.headers } })
     const payload = await response.json().catch(() => ({}))
@@ -42,9 +42,10 @@ export function createWorkspaceService(token: string) {
   return {
     state,
     async load() {
-      const [projects, tasks, notifications, risks] = await Promise.all([request<any[]>('/projects'), request<any[]>('/tasks'), request<any[]>('/notifications'), request<any[]>('/risks')])
+      const [projects, tasks, overdueTasks, notifications, risks] = await Promise.all([request<any[]>('/projects'), request<any[]>('/tasks'), request<any[]>('/dashboard/overdue-tasks'), request<any[]>('/notifications'), request<any[]>('/risks')])
       state.projects.splice(0, state.projects.length, ...projects.map(mapProject))
       state.tasks.splice(0, state.tasks.length, ...tasks.map(mapTask))
+      state.overdueTasks.splice(0, state.overdueTasks.length, ...overdueTasks.map(mapTask))
       state.risks.splice(0, state.risks.length, ...risks.map((item) => ({ id: item.id, title: item.title, task: item.description ?? '', level: item.level, owner: item.owner ?? '', status: (item.status === 'resolved' ? '已处理' : '待处理') as Risk['status'] })))
       state.notifications.splice(0, state.notifications.length, ...notifications.map((item) => ({ id: item.id, title: item.title, time: item.created_at, read: Boolean(item.is_read), path: item.link || '/notifications' })))
     },

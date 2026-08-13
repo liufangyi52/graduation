@@ -35,6 +35,7 @@ export class AppController {
   @Patch('projects/:id/members/:userId') async updateProjectMember(@Headers('authorization') authorization: string | undefined, @Param('id') id: string, @Param('userId') userId: string, @Body() body: ProjectMemberUpdateDto) { return this.app.updateProjectMemberRole(await this.user(authorization), id, userId, body.projectRole) }
   @Delete('projects/:id/members/:userId') async removeProjectMember(@Headers('authorization') authorization: string | undefined, @Param('id') id: string, @Param('userId') userId: string) { return this.app.removeProjectMember(await this.user(authorization), id, userId) }
   @Get('tasks') async tasks(@Headers('authorization') authorization?: string) { return this.app.tasks(await this.user(authorization)) }
+  @Get('dashboard/overdue-tasks') async overdueTasks(@Headers('authorization') authorization?: string) { return this.app.overdueTasks(await this.user(authorization)) }
   @Post('tasks') async createTask(@Headers('authorization') authorization: string | undefined, @Body() body: CreateTaskDto) { return this.app.createTask(await this.user(authorization), body) }
   @Get('calendar-events') async calendarEvents(@Headers('authorization') authorization?: string) { return this.app.calendarEvents(await this.user(authorization)) }
   @Patch('tasks/:id') async updateTask(@Headers('authorization') authorization: string | undefined, @Param('id') id: string, @Body() body: UpdateTaskDto) { return this.app.updateTask(await this.user(authorization), id, body) }

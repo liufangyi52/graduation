@@ -397,6 +397,16 @@ export class AppService {
     return rows
   }
 
+  async overdueTasks(user: SessionUser) {
+    if (user.role === 'admin' || user.role === 'auditor') return []
+    const filter = user.role === 'manager' ? 'p.owner_id=?' : 't.assignee_id=?'
+    const [rows] = await pool.query<any[]>(`SELECT t.id,t.title,t.priority,t.status,t.progress,DATE_FORMAT(t.due_date,'%Y-%m-%d') due_date,p.name project_name,u.name assignee_name
+      FROM tasks t JOIN projects p ON p.id=t.project_id JOIN users u ON u.id=t.assignee_id
+      WHERE p.deleted_at IS NULL AND t.status NOT IN ('completed','closed') AND t.due_date < CURDATE() AND ${filter}
+      ORDER BY t.due_date ASC,t.priority DESC LIMIT 20`, [user.id])
+    return rows
+  }
+
   async createTask(user: SessionUser, input: { projectId: string; title: string; description?: string; assigneeId: string; priority: 'low' | 'medium' | 'high' | 'urgent'; status?: 'todo' | 'in_progress' | 'completed'; progress?: number; dueDate?: string | null }) {
     try { assertManagedTaskInput(input) } catch (error) { throw new BadRequestException(error instanceof Error ? error.message : 'Invalid task') }
     await this.assertProjectManager(user, input.projectId)
