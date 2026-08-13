@@ -57,10 +57,10 @@ export class AppService {
 
   async projects(user: SessionUser) {
     const sql = user.role === 'admin' || user.role === 'auditor'
-      ? `SELECT p.id,p.name,p.code,p.status,p.start_date,p.end_date,u.name owner_name,COALESCE(mc.members,0) members,COALESCE(tc.progress,0) progress FROM projects p JOIN users u ON u.id=p.owner_id LEFT JOIN (SELECT project_id,COUNT(*) members FROM project_members GROUP BY project_id) mc ON mc.project_id=p.id LEFT JOIN (SELECT project_id,ROUND(AVG(progress)) progress FROM tasks GROUP BY project_id) tc ON tc.project_id=p.id ORDER BY p.created_at DESC`
+      ? `SELECT p.id,p.name,p.code,p.status,p.start_date,p.end_date,u.name owner_name,COALESCE(mc.members,0) members,COALESCE(tc.progress,0) progress FROM projects p JOIN users u ON u.id=p.owner_id LEFT JOIN (SELECT project_id,COUNT(*) members FROM project_members GROUP BY project_id) mc ON mc.project_id=p.id LEFT JOIN (SELECT project_id,ROUND(AVG(progress)) progress FROM tasks GROUP BY project_id) tc ON tc.project_id=p.id WHERE p.deleted_at IS NULL ORDER BY p.created_at DESC`
       : user.role === 'manager'
-        ? `SELECT p.id,p.name,p.code,p.status,p.start_date,p.end_date,u.name owner_name,COALESCE(mc.members,0) members,COALESCE(tc.progress,0) progress FROM projects p JOIN users u ON u.id=p.owner_id LEFT JOIN (SELECT project_id,COUNT(*) members FROM project_members GROUP BY project_id) mc ON mc.project_id=p.id LEFT JOIN (SELECT project_id,ROUND(AVG(progress)) progress FROM tasks GROUP BY project_id) tc ON tc.project_id=p.id WHERE p.owner_id=? ORDER BY p.created_at DESC`
-        : `SELECT p.id,p.name,p.code,p.status,p.start_date,p.end_date,u.name owner_name,COALESCE(mc.members,0) members,COALESCE(tc.progress,0) progress FROM project_members pm JOIN projects p ON p.id=pm.project_id JOIN users u ON u.id=p.owner_id LEFT JOIN (SELECT project_id,COUNT(*) members FROM project_members GROUP BY project_id) mc ON mc.project_id=p.id LEFT JOIN (SELECT project_id,ROUND(AVG(progress)) progress FROM tasks GROUP BY project_id) tc ON tc.project_id=p.id WHERE pm.user_id=? ORDER BY p.created_at DESC`
+        ? `SELECT p.id,p.name,p.code,p.status,p.start_date,p.end_date,u.name owner_name,COALESCE(mc.members,0) members,COALESCE(tc.progress,0) progress FROM projects p JOIN users u ON u.id=p.owner_id LEFT JOIN (SELECT project_id,COUNT(*) members FROM project_members GROUP BY project_id) mc ON mc.project_id=p.id LEFT JOIN (SELECT project_id,ROUND(AVG(progress)) progress FROM tasks GROUP BY project_id) tc ON tc.project_id=p.id WHERE p.owner_id=? AND p.deleted_at IS NULL ORDER BY p.created_at DESC`
+        : `SELECT p.id,p.name,p.code,p.status,p.start_date,p.end_date,u.name owner_name,COALESCE(mc.members,0) members,COALESCE(tc.progress,0) progress FROM project_members pm JOIN projects p ON p.id=pm.project_id JOIN users u ON u.id=p.owner_id LEFT JOIN (SELECT project_id,COUNT(*) members FROM project_members GROUP BY project_id) mc ON mc.project_id=p.id LEFT JOIN (SELECT project_id,ROUND(AVG(progress)) progress FROM tasks GROUP BY project_id) tc ON tc.project_id=p.id WHERE pm.user_id=? AND p.deleted_at IS NULL ORDER BY p.created_at DESC`
     const [rows] = await pool.query<any[]>(sql, user.role === 'manager' || user.role === 'member' ? [user.id] : [])
     return rows
   }
@@ -209,7 +209,7 @@ export class AppService {
   }
 
   async tasks(user: SessionUser) {
-    const filter = user.role === 'member' ? 'WHERE t.assignee_id=?' : user.role === 'manager' ? 'WHERE p.owner_id=?' : ''
+    const filter = user.role === 'member' ? 'WHERE t.assignee_id=? AND p.deleted_at IS NULL' : user.role === 'manager' ? 'WHERE p.owner_id=? AND p.deleted_at IS NULL' : 'WHERE p.deleted_at IS NULL'
     const [rows] = await pool.query<any[]>(`SELECT t.id,t.title,t.description,t.priority,t.status,t.progress,t.due_date,p.id project_id,p.name project_name,u.id assignee_id,u.name assignee_name FROM tasks t JOIN projects p ON p.id=t.project_id JOIN users u ON u.id=t.assignee_id ${filter} ORDER BY t.updated_at DESC`, filter ? [user.id] : [])
     return rows
   }
@@ -224,13 +224,13 @@ export class AppService {
       JOIN projects p ON p.id=t.project_id
       ${membershipJoin}
       JOIN users u ON u.id=t.assignee_id
-      WHERE t.due_date IS NOT NULL AND ${projectFilter}
+      WHERE t.due_date IS NOT NULL AND p.deleted_at IS NULL AND ${projectFilter}
       UNION ALL
       SELECT m.id,'meeting' type,m.title,p.id project_id,p.name project_name,DATE_FORMAT(m.created_at, '%Y-%m-%d') date,NULL assignee_name,NULL priority,NULL status
       FROM meetings m
       JOIN projects p ON p.id=m.project_id
       ${membershipJoin}
-      WHERE ${projectFilter}
+      WHERE p.deleted_at IS NULL AND ${projectFilter}
       ORDER BY date ASC, type ASC, title ASC
     `, values)
     return rows
@@ -645,7 +645,7 @@ export class AppService {
   }
 
   async listAnalyses(user: SessionUser) {
-    const managerFilter = user.role === 'admin' ? '' : ' WHERE p.owner_id=?'
+    const managerFilter = user.role === 'admin' ? ' WHERE p.deleted_at IS NULL' : ' WHERE p.owner_id=? AND p.deleted_at IS NULL'
     const [rows] = await pool.query<any[]>(`SELECT a.id,a.meeting_id,a.status,a.model,a.result_json,a.created_at,m.title,m.project_id FROM ai_analyses a JOIN meetings m ON m.id=a.meeting_id JOIN projects p ON p.id=m.project_id${managerFilter} ORDER BY a.created_at DESC`, managerFilter ? [user.id] : [])
     return rows.map((row) => ({ ...row, result: row.result_json ? normalizeStoredAnalysis(row.result_json) : null }))
   }
@@ -714,10 +714,10 @@ export class AppService {
 
   async risks(user: SessionUser) {
     const [rows] = user.role === 'member'
-      ? await pool.query<any[]>('SELECT r.* FROM risks r JOIN project_members pm ON pm.project_id=r.project_id WHERE pm.user_id=? ORDER BY r.created_at DESC', [user.id])
+      ? await pool.query<any[]>('SELECT r.* FROM risks r JOIN project_members pm ON pm.project_id=r.project_id JOIN projects p ON p.id=r.project_id WHERE pm.user_id=? AND p.deleted_at IS NULL ORDER BY r.created_at DESC', [user.id])
       : user.role === 'manager'
-        ? await pool.query<any[]>('SELECT r.* FROM risks r JOIN projects p ON p.id=r.project_id WHERE p.owner_id=? ORDER BY r.created_at DESC', [user.id])
-        : await pool.query<any[]>('SELECT r.* FROM risks r ORDER BY r.created_at DESC')
+        ? await pool.query<any[]>('SELECT r.* FROM risks r JOIN projects p ON p.id=r.project_id WHERE p.owner_id=? AND p.deleted_at IS NULL ORDER BY r.created_at DESC', [user.id])
+        : await pool.query<any[]>('SELECT r.* FROM risks r JOIN projects p ON p.id=r.project_id WHERE p.deleted_at IS NULL ORDER BY r.created_at DESC')
     return rows
   }
 

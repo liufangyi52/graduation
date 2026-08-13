@@ -29,3 +29,9 @@ it('updates only supplied project fields for an owning manager', async () => {
 
   expect(execute).toHaveBeenCalledWith(expect.stringContaining('UPDATE projects SET name=?,status=?'), ['Renamed', 'paused', 'project-1'])
 })
+
+it('excludes soft-deleted projects from normal project listings', async () => {
+  const query = vi.spyOn(pool, 'query').mockResolvedValueOnce([[]] as any)
+  await new AppService({} as any).projects(manager)
+  expect(query).toHaveBeenCalledWith(expect.stringContaining('p.deleted_at IS NULL'), ['manager-1'])
+})
