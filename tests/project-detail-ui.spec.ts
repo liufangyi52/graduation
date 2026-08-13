@@ -31,3 +31,13 @@ it('defines a scannable and responsive project detail layout', () => {
   expect(styles).toContain('.project-detail-page .detail-tabs {')
   expect(styles).toContain('@media (max-width: 900px)')
 })
+
+it('gives the active project detail tab a distinct visual state', () => {
+  const styles = readFileSync(new URL('../src/style.css', import.meta.url), 'utf8')
+
+  expect(source).toContain(':class="{ selected: activeTab === tab.id }"')
+  expect(styles).toContain('.detail-tabs button.selected {')
+  expect(styles).toContain('color: var(--secondary)')
+  expect(styles).toContain('font-weight: 700')
+  expect(styles).toContain('border-bottom: 2px solid var(--secondary)')
+})

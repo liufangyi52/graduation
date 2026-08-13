@@ -32,6 +32,18 @@ it('does not expose project business routes to administrators', () => {
   expect(routes).not.toContain('/reviews')
 })
 
+it('limits auditors to audit workspace, notifications, and audit logs', () => {
+  expect(createAuthService().visibleRoutes('auditor'))
+    .toEqual(['/dashboard', '/notifications', '/audit-logs'])
+})
+
+it('renders a dedicated auditor dashboard without project management actions', () => {
+  const appSource = readFileSync(new URL('../src/App.vue', import.meta.url), 'utf8')
+
+  expect(appSource).toContain("currentPage === 'dashboard' && user.role === 'auditor'")
+  expect(appSource).not.toContain("user.role === 'auditor' && navigate('/projects')")
+})
+
 it('exposes project business controls only to project managers', () => {
   expect(canManageProjectBusiness('manager')).toBe(true)
   expect(canManageProjectBusiness('admin')).toBe(false)

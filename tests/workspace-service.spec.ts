@@ -35,6 +35,20 @@ it('loads task deadlines and meeting dates as calendar events', async () => {
   ])
 })
 
+it('maps each risk to its project owner returned by the API', async () => {
+  vi.spyOn(globalThis, 'fetch')
+    .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }))
+    .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }))
+    .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }))
+    .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }))
+    .mockResolvedValueOnce(new Response(JSON.stringify([{ id: 'risk-1', title: 'Dependency', description: 'Waiting', level: 'medium', status: 'open', project_owner_name: 'Manager' }]), { status: 200 }))
+  const service = createWorkspaceService('token')
+
+  await service.load()
+
+  expect(service.state.risks[0].owner).toBe('Manager')
+})
+
 it('maps server-calculated project progress instead of replacing it with zero', async () => {
   vi.spyOn(globalThis, 'fetch')
     .mockResolvedValueOnce(new Response(JSON.stringify([{ id: 'project-1', name: 'Alpha', code: 'A', owner_name: 'Manager', status: 'active', progress: 65, end_date: null, members: 1 }]), { status: 200 }))

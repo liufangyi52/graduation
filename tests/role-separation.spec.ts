@@ -4,6 +4,7 @@ import { pool } from '../src/server/database'
 
 const admin = { id: 'admin-1', role: 'admin' as const, name: 'Admin', email: 'admin@example.com' }
 const manager = { id: 'manager-1', role: 'manager' as const, name: 'Manager', email: 'manager@example.com' }
+const auditor = { id: 'auditor-1', role: 'auditor' as const, name: 'Auditor', email: 'auditor@example.com' }
 
 describe('project business role separation', () => {
   beforeEach(() => vi.restoreAllMocks())
@@ -14,6 +15,21 @@ describe('project business role separation', () => {
 
     await expect(service.createProject(admin, { name: 'Alpha', code: 'ALPHA' })).rejects.toThrow('Only managers can perform this action')
     expect(execute).not.toHaveBeenCalled()
+  })
+
+  it('rejects an auditor from reading project business data but permits audit logs', async () => {
+    const service = new AppService({} as any)
+    vi.spyOn(pool, 'query').mockResolvedValue([[]] as any)
+
+    await expect(service.projects(auditor)).rejects.toThrow('Audit role cannot access project business data')
+    await expect(service.projectDetail(auditor, 'project-1')).rejects.toThrow('Audit role cannot access project business data')
+    await expect(service.listProjectMembers(auditor, 'project-1')).rejects.toThrow('Audit role cannot access project business data')
+    await expect(service.tasks(auditor)).rejects.toThrow('Audit role cannot access project business data')
+    await expect(service.calendarEvents(auditor)).rejects.toThrow('Audit role cannot access project business data')
+    await expect(service.listAnalyses(auditor)).rejects.toThrow('Audit role cannot access project business data')
+    await expect(service.reviewDetail(auditor, 'meeting-1')).rejects.toThrow('Audit role cannot access project business data')
+    await expect(service.risks(auditor)).rejects.toThrow('Audit role cannot access project business data')
+    await expect(service.auditLogs(auditor)).resolves.toEqual([])
   })
 
   it('rejects an administrator from updating a project task before mutation', async () => {

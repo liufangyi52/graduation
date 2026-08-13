@@ -65,12 +65,16 @@ export function createWorkspaceService(token: string) {
   })
   return {
     state,
+    async loadNotifications() {
+      const notifications = await request<any[]>('/notifications')
+      state.notifications.splice(0, state.notifications.length, ...notifications.map((item) => ({ id: item.id, title: item.title, time: item.created_at, read: Boolean(item.is_read), path: item.link || '/notifications' })))
+    },
     async load() {
       const [projects, tasks, overdueTasks, notifications, risks] = await Promise.all([request<any[]>('/projects'), request<any[]>('/tasks'), request<any[]>('/dashboard/overdue-tasks'), request<any[]>('/notifications'), request<any[]>('/risks')])
       state.projects.splice(0, state.projects.length, ...projects.map(mapProject))
       state.tasks.splice(0, state.tasks.length, ...tasks.map(mapTask))
       state.overdueTasks.splice(0, state.overdueTasks.length, ...overdueTasks.map(mapTask))
-      state.risks.splice(0, state.risks.length, ...risks.map((item) => ({ id: item.id, title: item.title, task: item.description ?? '', level: item.level, owner: item.owner ?? '', status: (item.status === 'resolved' ? '已处理' : '待处理') as Risk['status'] })))
+      state.risks.splice(0, state.risks.length, ...risks.map((item) => ({ id: item.id, title: item.title, task: item.description ?? '', level: item.level, owner: item.project_owner_name ?? '', status: (item.status === 'resolved' ? '已处理' : '待处理') as Risk['status'] })))
       state.notifications.splice(0, state.notifications.length, ...notifications.map((item) => ({ id: item.id, title: item.title, time: item.created_at, read: Boolean(item.is_read), path: item.link || '/notifications' })))
     },
     async loadCalendarEvents() {

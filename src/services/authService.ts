@@ -46,7 +46,7 @@ const routeMatrix: Record<UserRole, string[]> = {
   manager: ['/dashboard', '/projects', '/tasks', '/risks', '/notifications', '/experiments', '/calendar', '/efficiency', '/meetings', '/reviews'],
   member: ['/dashboard', '/projects', '/tasks', '/my-tasks', '/notifications'],
   admin: ['/dashboard', '/notifications', '/settings', '/users', '/audit-logs'],
-  auditor: ['/dashboard', '/projects', '/tasks', '/risks', '/notifications', '/audit-logs'],
+  auditor: ['/dashboard', '/notifications', '/audit-logs'],
 }
 
 export function canManageProjectBusiness(role: UserRole): boolean {

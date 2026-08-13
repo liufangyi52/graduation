@@ -17,6 +17,7 @@ import TaskBoardPage from './components/TaskBoardPage.vue'
 import { beijingGreeting, formatBeijingDate } from './utils/date'
 import { calendarMonthDays, eventsForCalendarDate, formatCalendarDate, formatCalendarMonth, localIsoDate, shiftCalendarMonth, taskEventsForCalendarDate, visibleCalendarEvents } from './utils/calendar'
 import { averageTaskProgress } from './utils/progress'
+import { selectDeadlineWatchTasks } from './utils/tasks'
 import { analysisStatusLabel, priorityLabel, projectRoleLabel, projectStatusLabel, riskLevelLabel, riskStatusLabel, systemRoleLabel, taskStatusLabel } from './utils/labels'
 
 const props = defineProps<{ user: UserAccount; token: string }>()
@@ -26,10 +27,16 @@ const route = useRoute()
 const router = useRouter()
 const service = createWorkspaceService(props.token)
 const data = service.state
-void service.load().catch(() => flash('真实数据加载失败，请检查后端服务'))
-void service.loadCalendarEvents().catch(() => {})
 const auth = createAuthService()
 const meetings = createMeetingService(props.token)
+const isAuditor = computed(() => props.user.role === 'auditor')
+if (props.user.role === 'auditor') {
+  void service.loadNotifications().catch(() => flash('通知加载失败'))
+} else {
+  void service.load().catch(() => flash('真实数据加载失败，请检查后端服务'))
+  void service.loadCalendarEvents().catch(() => {})
+  void meetings.load().catch(() => {})
+}
 
 const dark = ref(false)
 const sidebarOpen = ref(true)
@@ -94,7 +101,6 @@ if (props.user.role === 'admin') {
   void auth.getSystemSettings(props.token).then((settings) => { systemSettings.value = settings }).catch(() => {})
 }
 if (props.user.role === 'admin' || props.user.role === 'auditor') void auth.listAuditLogs(props.token).then((items) => { auditLogs.value = items }).catch(() => {})
-void meetings.load().catch(() => {})
 const now = ref(new Date())
 const todayLabel = computed(() => formatBeijingDate(now.value))
 const greeting = computed(() => beijingGreeting(now.value))
@@ -104,7 +110,7 @@ let taskRefreshTimer: number | undefined
 
 onMounted(() => {
   dateTimer = window.setInterval(() => { now.value = new Date() }, 60_000)
-  taskRefreshTimer = window.setInterval(() => { void service.load().catch(() => {}) }, 10_000)
+  if (!isAuditor.value) taskRefreshTimer = window.setInterval(() => { void service.load().catch(() => {}) }, 10_000)
 })
 
 onUnmounted(() => {
@@ -166,7 +172,7 @@ const pendingReviews = computed(() => meetings.state.analyses.filter((analysis) 
   time: analysis.createdAt,
   status: analysis.status,
 })))
-const dueTasks = computed(() => data.overdueTasks.slice(0, 3))
+const dueTasks = computed(() => selectDeadlineWatchTasks(data.overdueTasks))
 const filteredProjects = computed(() => data.projects.filter((project) => {
   const matchesSearch = !search.value || `${project.name}${project.code}${project.owner}`.toLowerCase().includes(search.value.toLowerCase())
   const matchesState = projectStateFilter.value === 'all' || project.state === projectStateFilter.value
@@ -558,13 +564,19 @@ async function saveSystemSettings() {
 
           <div class="dashboard-grid top-grid">
             <article class="panel review-panel"><div class="panel-heading"><div><p class="eyebrow">AI REVIEW QUEUE</p><h3>待审核 AI 分析任务</h3></div><button class="text-button" @click="navigate('/reviews')">查看全部 <ArrowRight :size="14" /></button></div><div class="table-wrap"><table><thead><tr><th>会议标题</th><th>分析模式</th><th>置信度</th><th>时间</th><th></th></tr></thead><tbody><tr v-for="review in pendingReviews" :key="review.id"><td><strong>{{ review.meeting }}</strong><small>{{ review.project }}</small></td><td><span class="tag blue">{{ review.mode }}</span></td><td><div class="confidence"><span><i :style="{ width: `${review.confidence}%` }"></i></span><b>{{ review.confidence }}%</b></div></td><td class="mono">{{ review.time }}</td><td><button class="small-button" @click="reviewMeetingAnalysis(review.id, true)">审核</button></td></tr><tr v-if="!pendingReviews.length"><td colspan="5" class="empty-cell">暂无待审核记录</td></tr></tbody></table></div></article>
-            <article class="panel due-panel"><div class="panel-heading"><div><p class="eyebrow">DEADLINE WATCH</p><h3>即将到期任务</h3></div><CalendarDays :size="18" class="panel-icon" /></div><div class="due-list"><div v-for="task in dueTasks" :key="task.id" class="due-item" :class="priorityLabel(task.rawPriority || task.priority).tone === 'red' ? 'critical' : priorityLabel(task.rawPriority || task.priority).tone === 'amber' ? 'high' : 'normal'"><div><strong>{{ task.title }}</strong><div class="due-meta"><span class="avatar small">{{ task.owner.slice(0, 1) }}</span>{{ task.owner }}<span class="mono">{{ task.due }}</span></div></div><span class="tag" :class="priorityLabel(task.rawPriority || task.priority).tone">{{ priorityLabel(task.rawPriority || task.priority).label }}</span></div></div><button class="wide-ghost" @click="navigate('/tasks')">查看完整任务表 <ArrowRight :size="15" /></button></article>
+            <article class="panel due-panel"><div class="panel-heading"><div><p class="eyebrow">DEADLINE WATCH</p><h3>即将到期任务</h3></div><CalendarDays :size="18" class="panel-icon" /></div><div class="due-list"><div v-for="task in dueTasks" :key="task.id" class="due-item" :class="priorityLabel(task.rawPriority || task.priority).tone === 'red' ? 'critical' : priorityLabel(task.rawPriority || task.priority).tone === 'amber' ? 'high' : 'normal'"><div><strong>{{ task.title }}</strong><div class="due-meta"><span class="avatar small">{{ task.owner.slice(0, 1) }}</span>{{ task.owner }}<span class="mono">{{ task.due }}</span></div></div><span class="tag" :class="priorityLabel(task.rawPriority || task.priority).tone">{{ priorityLabel(task.rawPriority || task.priority).label }}</span></div><p v-if="!dueTasks.length" class="due-empty">暂无即将到期任务</p></div><button class="wide-ghost" @click="navigate('/tasks')">查看完整任务表 <ArrowRight :size="15" /></button></article>
           </div>
           <div class="dashboard-grid bottom-grid"><article class="panel chart-panel"><div class="panel-heading"><div><p class="eyebrow">DELIVERY TREND</p><h3>任务完成趋势</h3></div><span class="chart-range">实时数据</span></div><div class="empty-cell">任务更新时间序列累计后将在此展示趋势。</div><p class="chart-note">当前列表仅提供任务当前状态，未伪造历史趋势数据。</p></article><article class="panel risk-panel"><div class="panel-heading"><div><p class="eyebrow">RISK DISTRIBUTION</p><h3>风险分布统计</h3></div><AlertTriangle :size="18" class="panel-icon" /></div><div class="donut-wrap"><div class="donut" :style="riskDonutStyle"><div><strong>{{ data.risks.length }}</strong><span>总风险项</span></div></div></div><div class="risk-legend"><div><span><i class="dot red-dot"></i>高风险</span><b>{{ data.risks.filter((risk) => risk.level === 'high').length }}</b></div><div><span><i class="dot amber-dot"></i>中风险</span><b>{{ data.risks.filter((risk) => risk.level === 'medium').length }}</b></div><div><span><i class="dot green-dot"></i>低风险</span><b>{{ data.risks.filter((risk) => risk.level === 'low').length }}</b></div></div></article></div>
         </section>
 
         <section v-else-if="currentPage === 'dashboard' && user.role === 'admin'" class="page-section">
           <div class="welcome-row"><div><p class="eyebrow">SYSTEM ADMINISTRATION</p><h2>{{ greeting }}，{{ user.name }}</h2><p class="muted">管理账号、系统配置与审计记录。</p></div><button class="primary-button" @click="navigate('/users')"><Users :size="16" />账号管理</button></div>
+        </section>
+
+        <section v-else-if="currentPage === 'dashboard' && user.role === 'auditor'" class="page-section">
+          <div class="welcome-row"><div><p class="eyebrow">AUDIT WORKSPACE</p><h2>{{ greeting }}，{{ user.name }}</h2><p class="muted">查看关键操作与数据变更记录，支持问题追溯。</p></div><button class="primary-button" @click="navigate('/audit-logs')"><ClipboardList :size="16" />审计日志</button></div>
+          <div class="metric-grid"><article class="metric-card"><div class="metric-label">审计记录 <ClipboardList :size="16" /></div><div class="metric-number">{{ auditLogs.length }}</div><small>最近 500 条关键操作</small></article><article class="metric-card"><div class="metric-label">数据变更 <Target :size="16" /></div><div class="metric-number">{{ auditLogs.filter((log) => String(log.action).includes('updated') || String(log.action).includes('created')).length }}</div><small>可在日志中追溯详情</small></article><article class="metric-card"><div class="metric-label">未读通知 <Bell :size="16" /></div><div class="metric-number">{{ data.notifications.filter((item) => !item.read).length }}</div><small>仅显示个人通知</small></article></div>
+          <article class="panel table-panel"><div class="panel-heading"><div><p class="eyebrow">RECENT AUDIT EVENTS</p><h3>最近关键操作</h3></div><button class="text-button" @click="navigate('/audit-logs')">查看全部 <ArrowRight :size="14" /></button></div><div class="table-wrap"><table><thead><tr><th>时间</th><th>操作者</th><th>操作</th><th>对象</th></tr></thead><tbody><tr v-for="log in auditLogs.slice(0, 5)" :key="log.id"><td class="mono">{{ log.created_at }}</td><td>{{ log.actor_name ?? '系统' }}</td><td>{{ log.action }}</td><td>{{ log.entity_type }} / {{ log.entity_id ?? '-' }}</td></tr><tr v-if="!auditLogs.length"><td colspan="4" class="empty-cell">暂无审计记录</td></tr></tbody></table></div></article>
         </section>
 
         <section v-else-if="currentPage === 'dashboard' && isMember" class="page-section member-dashboard">
@@ -585,7 +597,7 @@ async function saveSystemSettings() {
           <article class="panel member-feedback-panel"><div class="panel-heading"><div><p class="eyebrow">RECENT FEEDBACK</p><h3>我的近期工作反馈</h3></div></div><div v-if="data.feedbacks.filter((item) => item.author === user.name).length" class="feedback-list"><div v-for="item in data.feedbacks.filter((item) => item.author === user.name)" :key="item.id" class="feedback-item"><span class="avatar">{{ user.name.slice(0, 1) }}</span><div><strong>{{ item.content }}</strong><p>{{ item.createdAt }} · 已更新至 {{ item.progress }}%</p></div></div></div><div v-else class="feedback-empty">暂未提交工作反馈。提交后，项目经理可在项目动态中查看。</div></article>
         </section>
 
-        <section v-else-if="currentPage === 'risks'" class="page-section"><div class="filter-bar"><select v-model="riskLevelFilter"><option value="all">全部风险等级</option><option value="high">高风险</option><option value="medium">中风险</option><option value="low">低风险</option></select><span class="risk-summary"><b>{{ highRiskCount }}</b> 个高风险项待处理</span></div><article class="panel table-panel"><div class="table-wrap"><table><thead><tr><th>风险事项</th><th>关联任务</th><th>等级</th><th>负责人</th><th>处理状态</th><th>操作</th></tr></thead><tbody><tr v-for="risk in filteredRisks" :key="risk.id"><td><strong>{{ risk.title }}</strong><small class="mono">{{ risk.id }}</small></td><td>{{ risk.task }}</td><td><span class="tag" :class="riskLevelLabel(risk.level).tone">{{ riskLevelLabel(risk.level).label }}</span></td><td><span class="person"><span class="avatar small">{{ risk.owner.slice(0, 1) }}</span>{{ risk.owner }}</span></td><td><span class="tag" :class="riskStatusLabel(risk.status).tone">{{ riskStatusLabel(risk.status).label }}</span></td><td><button v-if="canManageBusiness && risk.status !== '已处理'" class="small-button" @click="resolveRisk(risk.id)">标记处理</button><span v-else class="muted">{{ risk.status === '已处理' ? '已完成' : '只读' }}</span></td></tr></tbody></table></div></article></section>
+        <section v-else-if="currentPage === 'risks'" class="page-section"><div class="filter-bar"><select v-model="riskLevelFilter"><option value="all">全部风险等级</option><option value="high">高风险</option><option value="medium">中风险</option><option value="low">低风险</option></select><span class="risk-summary"><b>{{ highRiskCount }}</b> 个高风险项待处理</span></div><article class="panel table-panel"><div class="table-wrap"><table><thead><tr><th>风险事项</th><th>关联任务</th><th>等级</th><th>项目负责人</th><th>处理状态</th><th>操作</th></tr></thead><tbody><tr v-for="risk in filteredRisks" :key="risk.id"><td><strong>{{ risk.title }}</strong><small class="mono">{{ risk.id }}</small></td><td>{{ risk.task }}</td><td><span class="tag" :class="riskLevelLabel(risk.level).tone">{{ riskLevelLabel(risk.level).label }}</span></td><td><span class="person"><span class="avatar small">{{ risk.owner.slice(0, 1) }}</span>{{ risk.owner || '未设置' }}</span></td><td><span class="tag" :class="riskStatusLabel(risk.status).tone">{{ riskStatusLabel(risk.status).label }}</span></td><td><button v-if="canManageBusiness && risk.status !== '已处理'" class="small-button" @click="resolveRisk(risk.id)">标记处理</button><span v-else class="muted">{{ risk.status === '已处理' ? '已完成' : '只读' }}</span></td></tr></tbody></table></div></article></section>
 
         <section v-else-if="currentPage === 'notifications'" class="page-section"><div class="filter-bar"><button class="segmented" :class="{ selected: !unreadOnly }" @click="unreadOnly = false">全部通知</button><button class="segmented" :class="{ selected: unreadOnly }" @click="unreadOnly = true">未读通知</button><span class="result-count">{{ filteredNotifications.length }} 条</span></div><div class="notification-list"><article v-for="item in filteredNotifications" :key="item.id" class="notification-item" :class="{ unread: !item.read }" @click="markNotification(item.id, item.path)"><span class="notification-icon"><Bell :size="17" /></span><div><strong>{{ item.title }}</strong><p>{{ item.time }}</p></div><span v-if="!item.read" class="unread-dot"></span><ArrowRight :size="16" class="notification-arrow" /></article></div></section>
 

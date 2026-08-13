@@ -57,6 +57,7 @@ export class AppService {
   }
 
   async projects(user: SessionUser) {
+    this.assertNotAuditorBusinessRead(user)
     const sql = user.role === 'admin' || user.role === 'auditor'
       ? `SELECT p.id,p.name,p.code,p.description,p.status,p.start_date,p.end_date,u.name owner_name,COALESCE(mc.members,0) members,COALESCE(tc.progress,0) progress FROM projects p JOIN users u ON u.id=p.owner_id LEFT JOIN (SELECT project_id,COUNT(*) members FROM project_members GROUP BY project_id) mc ON mc.project_id=p.id LEFT JOIN (SELECT project_id,ROUND(AVG(progress)) progress FROM tasks GROUP BY project_id) tc ON tc.project_id=p.id WHERE p.deleted_at IS NULL ORDER BY p.created_at DESC`
       : user.role === 'manager'
@@ -115,6 +116,7 @@ export class AppService {
   }
 
   async projectDetail(user: SessionUser, projectId: string) {
+    this.assertNotAuditorBusinessRead(user)
     const access = user.role === 'manager'
       ? 'p.owner_id=?'
       : user.role === 'member'
@@ -200,6 +202,7 @@ export class AppService {
   }
 
   async listProjectMembers(user: SessionUser, projectId: string) {
+    this.assertNotAuditorBusinessRead(user)
     if (user.role === 'manager') await this.assertProjectManager(user, projectId)
     else if (user.role === 'member') {
       const [memberships] = await pool.query<any[]>('SELECT project_id FROM project_members WHERE project_id=? AND user_id=?', [projectId, user.id])
@@ -245,12 +248,14 @@ export class AppService {
   }
 
   async tasks(user: SessionUser) {
+    this.assertNotAuditorBusinessRead(user)
     const filter = user.role === 'member' ? 'WHERE t.assignee_id=? AND p.deleted_at IS NULL' : user.role === 'manager' ? 'WHERE p.owner_id=? AND p.deleted_at IS NULL' : 'WHERE p.deleted_at IS NULL'
     const [rows] = await pool.query<any[]>(`SELECT t.id,t.title,t.description,t.priority,t.status,t.progress,t.due_date,p.id project_id,p.name project_name,u.id assignee_id,u.name assignee_name FROM tasks t JOIN projects p ON p.id=t.project_id JOIN users u ON u.id=t.assignee_id ${filter} ORDER BY t.updated_at DESC`, filter ? [user.id] : [])
     return rows
   }
 
   async calendarEvents(user: SessionUser) {
+    this.assertNotAuditorBusinessRead(user)
     const projectFilter = user.role === 'manager' ? 'p.owner_id=?' : user.role === 'member' ? 'pm.user_id=?' : '1=1'
     const membershipJoin = user.role === 'member' ? 'JOIN project_members pm ON pm.project_id=p.id' : ''
     const values = user.role === 'admin' || user.role === 'auditor' ? [] : [user.id, user.id]
@@ -399,6 +404,10 @@ export class AppService {
     await pool.execute('INSERT INTO audit_logs (id,actor_id,action,entity_type,entity_id,details) VALUES (?,?,?,?,?,?)', [randomUUID(), actorId, action, entityType, entityId, JSON.stringify(details)])
   }
 
+  private assertNotAuditorBusinessRead(user: SessionUser) {
+    if (user.role === 'auditor') throw new ForbiddenException('Audit role cannot access project business data')
+  }
+
   private async assertProjectManager(user: SessionUser, projectId: string) {
     if (user.role !== 'manager') throw new ForbiddenException('Only managers can perform this action')
     const [rows] = await pool.query<any[]>('SELECT owner_id FROM projects WHERE id=? AND deleted_at IS NULL', [projectId])
@@ -434,7 +443,8 @@ export class AppService {
   }
 
   async overdueTasks(user: SessionUser) {
-    if (user.role === 'admin' || user.role === 'auditor') return []
+    this.assertNotAuditorBusinessRead(user)
+    if (user.role === 'admin') return []
     const filter = user.role === 'manager' ? 'p.owner_id=?' : 't.assignee_id=?'
     const [rows] = await pool.query<any[]>(`SELECT t.id,t.title,t.priority,t.status,t.progress,DATE_FORMAT(t.due_date,'%Y-%m-%d') due_date,p.name project_name,u.name assignee_name
       FROM tasks t JOIN projects p ON p.id=t.project_id JOIN users u ON u.id=t.assignee_id
@@ -681,12 +691,14 @@ export class AppService {
   }
 
   async listAnalyses(user: SessionUser) {
+    this.assertNotAuditorBusinessRead(user)
     const managerFilter = user.role === 'admin' ? ' WHERE p.deleted_at IS NULL' : ' WHERE p.owner_id=? AND p.deleted_at IS NULL'
     const [rows] = await pool.query<any[]>(`SELECT a.id,a.meeting_id,a.status,a.model,a.result_json,a.created_at,m.title,m.project_id FROM ai_analyses a JOIN meetings m ON m.id=a.meeting_id JOIN projects p ON p.id=m.project_id${managerFilter} ORDER BY a.created_at DESC`, managerFilter ? [user.id] : [])
     return rows.map((row) => ({ ...row, result: row.result_json ? normalizeStoredAnalysis(row.result_json) : null }))
   }
 
   async reviewDetail(user: SessionUser, meetingId: string) {
+    this.assertNotAuditorBusinessRead(user)
     const [meetings] = await pool.query<any[]>(`SELECT m.id,m.project_id,m.title,m.content,m.created_at,
       COALESCE(v.version_number,(SELECT MAX(v2.version_number) FROM meeting_versions v2 WHERE v2.meeting_id=m.id)) version_number,
       COALESCE(v.desensitized_content,(SELECT v3.desensitized_content FROM meeting_versions v3 WHERE v3.meeting_id=m.id ORDER BY v3.version_number DESC LIMIT 1)) desensitized_content
@@ -694,7 +706,7 @@ export class AppService {
       WHERE m.id=? AND p.deleted_at IS NULL`, [meetingId])
     const meeting = meetings[0]
     if (!meeting) throw new BadRequestException('Meeting does not exist')
-    if (user.role !== 'admin' && user.role !== 'auditor') await this.assertProjectViewer(user, meeting.project_id)
+    if (user.role !== 'admin') await this.assertProjectViewer(user, meeting.project_id)
     const [analyses] = await pool.query<any[]>(`SELECT id,status,model,result_json,created_at,reviewed_at,rejection_reason,reanalysis_of_id FROM ai_analyses
       WHERE meeting_id=?${user.role === 'member' ? " AND status='approved'" : ''} ORDER BY created_at DESC LIMIT 1`, [meetingId])
     const analysis = analyses[0] ? { ...analyses[0], result: analyses[0].result_json ? normalizeStoredAnalysis(analyses[0].result_json) : null } : null
@@ -795,11 +807,12 @@ export class AppService {
   }
 
   async risks(user: SessionUser) {
+    this.assertNotAuditorBusinessRead(user)
     const [rows] = user.role === 'member'
-      ? await pool.query<any[]>('SELECT r.* FROM risks r JOIN project_members pm ON pm.project_id=r.project_id JOIN projects p ON p.id=r.project_id WHERE pm.user_id=? AND p.deleted_at IS NULL ORDER BY r.created_at DESC', [user.id])
+      ? await pool.query<any[]>('SELECT r.*,u.name project_owner_name FROM risks r JOIN project_members pm ON pm.project_id=r.project_id JOIN projects p ON p.id=r.project_id JOIN users u ON u.id=p.owner_id WHERE pm.user_id=? AND p.deleted_at IS NULL ORDER BY r.created_at DESC', [user.id])
       : user.role === 'manager'
-        ? await pool.query<any[]>('SELECT r.* FROM risks r JOIN projects p ON p.id=r.project_id WHERE p.owner_id=? AND p.deleted_at IS NULL ORDER BY r.created_at DESC', [user.id])
-        : await pool.query<any[]>('SELECT r.* FROM risks r JOIN projects p ON p.id=r.project_id WHERE p.deleted_at IS NULL ORDER BY r.created_at DESC')
+        ? await pool.query<any[]>('SELECT r.*,u.name project_owner_name FROM risks r JOIN projects p ON p.id=r.project_id JOIN users u ON u.id=p.owner_id WHERE p.owner_id=? AND p.deleted_at IS NULL ORDER BY r.created_at DESC', [user.id])
+        : await pool.query<any[]>('SELECT r.*,u.name project_owner_name FROM risks r JOIN projects p ON p.id=r.project_id JOIN users u ON u.id=p.owner_id WHERE p.deleted_at IS NULL ORDER BY r.created_at DESC')
     return rows
   }
 
