@@ -38,5 +38,7 @@ export function createMeetingService(token: string) {
     async restoreVersion(meetingId: string, versionId: string) { return request<MeetingVersion>(`/meetings/${meetingId}/versions/${versionId}/restore`, { method: 'POST' }) },
     async analyze(id: string) { return request<any>(`/meetings/${id}/analyze`, { method: 'POST' }) },
     async review(id: string, approved: boolean, reason?: string) { return request<any>(`/analyses/${id}/review`, { method: 'POST', body: JSON.stringify({ approved, ...(reason?.trim() ? { reason: reason.trim() } : {}) }) }) },
+    async reviewBatch(analysisIds: string[], approved: boolean, reason?: string) { return request<{ succeeded: Array<{ id: string; status: string }>; failed: Array<{ id: string; message: string }> }>('/analyses/review-batch', { method: 'POST', body: JSON.stringify({ analysisIds, approved, ...(reason?.trim() ? { reason: reason.trim() } : {}) }) }) },
+    async reanalyze(id: string) { return request<any>(`/analyses/${id}/reanalyze`, { method: 'POST' }) },
   }
 }

@@ -551,7 +551,7 @@ export class AppService {
   }
 
   async reviewAnalysis(user: SessionUser, analysisId: string, approved: boolean, reason?: string) {
-    const [rows] = await pool.query<any[]>('SELECT a.*,m.project_id FROM ai_analyses a JOIN meetings m ON m.id=a.meeting_id WHERE a.id=?', [analysisId])
+    const [rows] = await pool.query<any[]>('SELECT a.*,m.project_id,m.title meeting_title FROM ai_analyses a JOIN meetings m ON m.id=a.meeting_id WHERE a.id=?', [analysisId])
     if (!rows[0]) throw new BadRequestException('Analysis does not exist')
     await this.assertProjectManager(user, rows[0].project_id)
     if (rows[0].status !== 'pending') throw new BadRequestException('Analysis has already been reviewed')
@@ -561,6 +561,7 @@ export class AppService {
     try {
       await connection.beginTransaction()
       await connection.execute('UPDATE ai_analyses SET status=?,reviewed_by=?,reviewed_at=CURRENT_TIMESTAMP,rejection_reason=? WHERE id=?', [approved ? 'approved' : 'rejected', user.id, approved ? null : reason?.trim() ?? null, analysisId])
+      await connection.execute('INSERT INTO notifications (id,user_id,title,body,link) VALUES (?,?,?,?,?)', [randomUUID(), rows[0].requested_by, `${approved ? '分析已通过' : '分析被驳回'}：${rows[0].meeting_title}`, approved ? '分析结果已通过审核。' : '分析结果需要重新处理。', '/reviews'])
       if (approved) {
         const [projectManagers] = await connection.query<any[]>('SELECT owner_id FROM projects WHERE id=?', [rows[0].project_id])
         const fallbackAssignee = projectManagers[0]?.owner_id ?? user.id
@@ -577,6 +578,38 @@ export class AppService {
     } catch (reason) { await connection.rollback(); throw reason } finally { connection.release() }
     await this.audit(user.id, approved ? 'analysis.approved' : 'analysis.rejected', 'analysis', analysisId)
     return { id: analysisId, status: approved ? 'approved' : 'rejected' }
+  }
+
+  async reviewAnalyses(user: SessionUser, analysisIds: string[], approved: boolean, reason?: string) {
+    const succeeded: Array<{ id: string; status: string }> = []
+    const failed: Array<{ id: string; message: string }> = []
+    for (const id of analysisIds) {
+      try { succeeded.push(await this.reviewAnalysis(user, id, approved, reason)) }
+      catch (error) { failed.push({ id, message: error instanceof Error ? error.message : 'Review failed' }) }
+    }
+    return { succeeded, failed }
+  }
+
+  async reanalyzeRejectedAnalysis(user: SessionUser, analysisId: string) {
+    const [rows] = await pool.query<any[]>(`SELECT a.id,a.status,a.meeting_id,m.title,m.project_id,v.desensitized_content
+      FROM ai_analyses a JOIN meetings m ON m.id=a.meeting_id JOIN projects p ON p.id=m.project_id
+      LEFT JOIN meeting_versions v ON v.id=m.current_version_id WHERE a.id=? AND p.deleted_at IS NULL`, [analysisId])
+    const source = rows[0]
+    if (!source) throw new BadRequestException('Analysis does not exist')
+    await this.assertProjectManager(user, source.project_id)
+    if (source.status !== 'rejected') throw new BadRequestException('Only rejected analyses can be reanalyzed')
+    const id = randomUUID()
+    await pool.execute('INSERT INTO ai_analyses (id,meeting_id,requested_by,status,model,reanalysis_of_id) VALUES (?,?,?,?,?,?)', [id, source.meeting_id, user.id, 'pending', process.env.DEEPSEEK_MODEL ?? 'deepseek-chat', analysisId])
+    try {
+      const result = await this.deepseek.analyze(source.title, source.desensitized_content ?? '')
+      await pool.execute('UPDATE ai_analyses SET result_json=? WHERE id=?', [JSON.stringify(result), id])
+      await this.audit(user.id, 'analysis.reanalyzed', 'analysis', id, { sourceAnalysisId: analysisId })
+      return { id, meetingId: source.meeting_id, status: 'pending', reanalysisOfId: analysisId, result }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'DeepSeek analysis failed'
+      await pool.execute('UPDATE ai_analyses SET status="failed",error_message=? WHERE id=?', [message, id])
+      throw error
+    }
   }
 
   async risks(user: SessionUser) {
