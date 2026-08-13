@@ -3,8 +3,9 @@ import { createRagExperimentController } from '../src/services/ragExperimentCont
 
 function deferred<T>() {
   let resolve!: (value: T) => void
-  const promise = new Promise<T>((done) => { resolve = done })
-  return { promise, resolve }
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<T>((done, fail) => { resolve = done; reject = fail })
+  return { promise, resolve, reject }
 }
 
 const summary = { manual: {}, llm: {}, rag: {}, agent: {} } as any
@@ -41,6 +42,57 @@ it('keeps the newer A selection state when delayed A1 status and summary respons
 
   bSummary.resolve(summary); bStatus.resolve(ready)
   await Promise.all([runA1, runB])
+})
+
+it('keeps the newer A2 summary loading while a delayed A1 summary resolves', async () => {
+  const a1Summary = deferred<any>(); const a1Status = deferred<any>()
+  const bSummary = deferred<any>(); const bStatus = deferred<any>()
+  const a2Summary = deferred<any>(); const a2Status = deferred<any>()
+  const summaries = [a1Summary, bSummary, a2Summary]
+  const statuses = [a1Status, bStatus, a2Status]
+  const controller = createRagExperimentController({
+    experimentSummary: () => summaries.shift()!.promise,
+    ragIndexStatus: () => statuses.shift()!.promise,
+    syncRagIndex: async () => ({ indexedChunks: 0 }),
+  })
+
+  const runA1 = controller.loadSelectedProject('A')
+  const runB = controller.loadSelectedProject('B')
+  const runA2 = controller.loadSelectedProject('A')
+  a1Summary.resolve({ stale: 'A1' }); a1Status.resolve(ready)
+  await Promise.resolve()
+
+  expect(controller.state.summaryLoading).toBe(true)
+  expect(controller.state.summary).toBeNull()
+
+  a2Summary.resolve(summary); a2Status.resolve(ready); await runA2
+  bSummary.resolve(summary); bStatus.resolve(ready); await Promise.all([runA1, runB])
+})
+
+it('keeps the newer A2 notice and summary loading while a delayed A1 summary rejects', async () => {
+  const a1Summary = deferred<any>(); const a1Status = deferred<any>()
+  const bSummary = deferred<any>(); const bStatus = deferred<any>()
+  const a2Summary = deferred<any>(); const a2Status = deferred<any>()
+  const summaries = [a1Summary, bSummary, a2Summary]
+  const statuses = [a1Status, bStatus, a2Status]
+  const controller = createRagExperimentController({
+    experimentSummary: () => summaries.shift()!.promise,
+    ragIndexStatus: () => statuses.shift()!.promise,
+    syncRagIndex: async () => ({ indexedChunks: 0 }),
+  })
+
+  const runA1 = controller.loadSelectedProject('A')
+  const runB = controller.loadSelectedProject('B')
+  const runA2 = controller.loadSelectedProject('A')
+  controller.state.notice = 'A2 status is retained'
+  a1Summary.reject(new Error('A1 summary failed')); a1Status.resolve(ready)
+  await Promise.resolve()
+
+  expect(controller.state.summaryLoading).toBe(true)
+  expect(controller.state.notice).toBe('A2 status is retained')
+
+  a2Summary.resolve(summary); a2Status.resolve(ready); await runA2
+  bSummary.resolve(summary); bStatus.resolve(ready); await Promise.all([runA1, runB])
 })
 
 it('does not let delayed A1 sync update notice, loading, or trigger a status reload after A-to-B-to-A', async () => {
