@@ -133,7 +133,11 @@ export class AppService {
       FROM projects p JOIN users u ON u.id=p.owner_id WHERE p.id=? AND p.deleted_at IS NULL AND ${access}`, user.role === 'admin' || user.role === 'auditor' ? [projectId] : [projectId, user.id])
     if (!projectRows[0]) throw new BadRequestException('Project does not exist')
     const project = projectRows[0]
-    const [tasks] = await pool.query<any[]>(`SELECT t.id,t.title,t.description,t.project_id,t.priority,t.status,t.progress,t.due_date,t.assignee_id,u.name assignee_name
+    const [tasks] = await pool.query<any[]>(`SELECT t.id,t.title,t.description,t.project_id,t.priority,t.status,t.progress,t.created_at,t.due_date,t.assignee_id,u.name assignee_name,
+      COALESCE(
+        (SELECT MIN(l.created_at) FROM audit_logs l WHERE l.entity_type='task' AND l.entity_id=t.id AND l.action IN ('task.created','task.updated') AND JSON_UNQUOTE(JSON_EXTRACT(l.details,'$.status'))='completed'),
+        (SELECT MIN(l.created_at) FROM audit_logs l WHERE l.action='task.feedback_created' AND JSON_UNQUOTE(JSON_EXTRACT(l.details,'$.taskId'))=t.id AND JSON_EXTRACT(l.details,'$.progress')=100)
+      ) completed_at
       FROM tasks t JOIN users u ON u.id=t.assignee_id WHERE t.project_id=? ORDER BY t.updated_at DESC`, [projectId])
     const [meetings] = await pool.query<any[]>(`SELECT m.id,m.title,m.created_at,
       (SELECT COUNT(*) FROM meeting_versions mv WHERE mv.meeting_id=m.id) version_count,
@@ -144,7 +148,7 @@ export class AppService {
     const canEdit = user.role === 'manager' && project.owner_id === user.id
     return {
       project: { id: project.id, name: project.name, code: project.code, description: project.description, status: project.status, startDate: project.start_date, endDate: project.end_date, ownerId: project.owner_id, ownerName: project.owner_name, progress: Number(project.progress ?? 0) },
-      tasks: tasks.map((task) => ({ ...task, assigneeName: task.assignee_name, dueDate: task.due_date })),
+      tasks: tasks.map((task) => ({ ...task, assigneeName: task.assignee_name, createdAt: task.created_at, completedAt: task.completed_at ?? null, dueDate: task.due_date })),
       meetings: meetings.map((meeting) => ({ ...meeting, createdAt: meeting.created_at, versionCount: Number(meeting.version_count ?? 0), latestAnalysisStatus: meeting.latest_analysis_status ?? null })),
       risks: risks.map((risk) => ({ ...risk, createdAt: risk.created_at, resolvedAt: risk.resolved_at })),
       members,
@@ -564,7 +568,7 @@ export class AppService {
     if (!fields.length) throw new BadRequestException('No task changes supplied')
     await pool.execute(`UPDATE tasks SET ${fields.join(',')} WHERE id=?`, [...values, taskId])
     if (input.assigneeId && input.assigneeId !== task.assignee_id) await pool.execute('INSERT INTO notifications (id,user_id,title,body,link) VALUES (?,?,?,?,?)', [randomUUID(), input.assigneeId, `已分配任务：${input.title?.trim() ?? task.title}`, '请查看任务详情并更新进度。', '/my-tasks'])
-    await this.audit(user.id, 'task.updated', 'task', taskId, { fields: Object.keys(input).filter((key) => input[key as keyof typeof input] !== undefined) })
+    await this.audit(user.id, 'task.updated', 'task', taskId, { fields: Object.keys(input).filter((key) => input[key as keyof typeof input] !== undefined), status: input.status ?? (input.progress === 100 ? 'completed' : null), progress: input.progress ?? null })
     return { id: taskId, ...input }
   }
 

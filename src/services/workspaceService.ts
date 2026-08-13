@@ -1,5 +1,6 @@
 import { reactive } from 'vue'
 import { calendarDateFromApiValue } from '../utils/calendar'
+import type { ExportKind, ExportPayload } from '../utils/projectExport'
 
 export type TaskState = 'todo' | 'in-progress' | 'completed' | 'closed'
 export type RiskLevel = 'high' | 'medium' | 'low'
@@ -24,6 +25,8 @@ export interface ProjectDetailTask {
   priority: 'low' | 'medium' | 'high' | 'urgent'
   status: 'todo' | 'in_progress' | 'completed' | 'closed'
   progress: number
+  createdAt: string
+  completedAt?: string | null
   dueDate?: string | null
 }
 export interface ProjectDetail {
@@ -102,10 +105,13 @@ export function createWorkspaceService(token: string) {
           priority: task.priority,
           status: task.status,
           progress: Number(task.progress ?? 0),
+          createdAt: task.created_at ?? task.createdAt ?? '',
+          completedAt: task.completed_at ?? task.completedAt ?? null,
           dueDate: task.due_date ?? task.dueDate ?? null,
         })),
       } as ProjectDetail
     },
+    async getProjectExportData(projectId: string, kind: ExportKind) { return request<ExportPayload>(`/projects/${projectId}/export-data?kind=${kind}`) },
     async deleteProject(id: string) { return request(`/projects/${id}`, { method: 'DELETE' }) },
     async deletedProjects() { return request<any[]>('/projects/deleted') },
     async restoreProject(id: string) { return request(`/projects/${id}/restore`, { method: 'POST' }) },
