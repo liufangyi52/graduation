@@ -1,0 +1,28 @@
+<script setup lang="ts">
+import { computed, onMounted, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { createWorkspaceService, type Task, type TaskState } from '../services/workspaceService'
+import type { UserAccount } from '../services/authService'
+
+const props = defineProps<{ token: string; user: UserAccount }>()
+const route = useRoute(); const router = useRouter(); const service = createWorkspaceService(props.token); const tasks = ref<Task[]>([]); const view = ref<'table' | 'kanban'>('table'); const loading = ref(true); const error = ref('')
+const filters = ref({ project: '', assignee: '', status: '', priority: '', risk: '', dueFrom: '', dueTo: '', search: '' })
+const states: Array<{ id: TaskState; label: string }> = [{ id: 'todo', label: '待处理' }, { id: 'in-progress', label: '进行中' }, { id: 'completed', label: '已完成' }, { id: 'closed', label: '已关闭' }]
+function initFromQuery() { const q = route.query; for (const key of Object.keys(filters.value) as Array<keyof typeof filters.value>) filters.value[key] = String(q[key] ?? '') }
+function syncQuery() { const query: Record<string, string> = {}; for (const [key, value] of Object.entries(filters.value)) if (value) query[key] = value; if (view.value !== 'table') query.view = view.value; router.replace({ query }) }
+const filtered = computed(() => tasks.value.filter((task) => (!filters.value.search || `${task.title}${task.project}${task.owner}`.toLowerCase().includes(filters.value.search.toLowerCase())) && (!filters.value.project || task.projectId === filters.value.project) && (!filters.value.assignee || task.assigneeId === filters.value.assignee) && (!filters.value.status || task.state === filters.value.status) && (!filters.value.priority || task.rawPriority === filters.value.priority) && (!filters.value.risk || service.state.risks.some((risk) => risk.status !== '已处理' && `${risk.title}${risk.task}`.includes(task.id))) && (!filters.value.dueFrom || task.due >= filters.value.dueFrom) && (!filters.value.dueTo || task.due <= filters.value.dueTo)))
+const columns = computed(() => Object.fromEntries(states.map((state) => [state.id, filtered.value.filter((task) => task.state === state.id)])) as Record<TaskState, Task[]>)
+const canUpdate = computed(() => props.user.role === 'manager' || props.user.role === 'member')
+async function load() { loading.value = true; try { await service.load(); tasks.value = service.state.tasks.slice() } catch (e) { error.value = e instanceof Error ? e.message : '任务加载失败' } finally { loading.value = false } }
+async function updateStatus(task: Task) { if (!canUpdate.value) return; const next: TaskState = task.state === 'todo' ? 'in-progress' : task.state === 'in-progress' ? 'completed' : 'todo'; await service.updateTaskState(task.id, next); await load() }
+watch(() => route.query, initFromQuery, { immediate: true }); watch([filters, view], syncQuery, { deep: true }); onMounted(load)
+</script>
+
+<template>
+  <section class="page-section task-board-page">
+    <div class="filter-bar board-filters"><input v-model="filters.search" placeholder="搜索任务、项目或负责人" /><select v-model="filters.project"><option value="">全部项目</option><option v-for="project in service.state.projects" :key="project.id" :value="project.id">{{ project.name }}</option></select><input v-model="filters.assignee" placeholder="负责人 ID" /><select v-model="filters.status"><option value="">全部状态</option><option v-for="state in states" :key="state.id" :value="state.id">{{ state.label }}</option></select><select v-model="filters.priority"><option value="">全部优先级</option><option value="urgent">紧急</option><option value="high">高</option><option value="medium">中</option><option value="low">低</option></select><label><input v-model="filters.risk" type="checkbox" value="open" /> 未处理风险</label><input v-model="filters.dueFrom" type="date" /><input v-model="filters.dueTo" type="date" /><button class="segmented" :class="{ selected: view === 'table' }" @click="view = 'table'">表格</button><button class="segmented" :class="{ selected: view === 'kanban' }" @click="view = 'kanban'">看板</button></div>
+    <div v-if="loading" class="panel empty-cell">正在加载任务…</div><div v-else-if="error" class="panel empty-cell">{{ error }} <button class="small-button" @click="load">重试</button></div>
+    <article v-else-if="view === 'table'" class="panel table-panel"><div class="panel-heading"><h3>任务列表（{{ filtered.length }}）</h3></div><div class="table-wrap"><table><thead><tr><th>任务</th><th>项目</th><th>负责人</th><th>优先级</th><th>截止日期</th><th>状态</th><th></th></tr></thead><tbody><tr v-for="task in filtered" :key="task.id"><td><strong>{{ task.title }}</strong></td><td>{{ task.project }}</td><td>{{ task.owner }}</td><td>{{ task.rawPriority || task.priority }}</td><td>{{ task.due }}</td><td>{{ task.state }}</td><td><button v-if="canUpdate" class="small-button" @click="updateStatus(task)">推进</button></td></tr><tr v-if="!filtered.length"><td colspan="7" class="empty-cell">暂无符合条件的任务</td></tr></tbody></table></div></article>
+    <div v-else class="kanban-grid"><article v-for="state in states" :key="state.id" class="panel kanban-column"><div class="panel-heading"><h3>{{ state.label }}</h3><span class="tag gray">{{ columns[state.id].length }}</span></div><div v-for="task in columns[state.id]" :key="task.id" class="kanban-card"><strong>{{ task.title }}</strong><small>{{ task.project }} · {{ task.owner }}</small><span class="tag blue">{{ task.rawPriority || task.priority }}</span><button v-if="canUpdate" class="small-button" @click="updateStatus(task)">推进</button></div><div v-if="!columns[state.id].length" class="empty-cell">暂无任务</div></article></div>
+  </section>
+</template>

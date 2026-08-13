@@ -1,0 +1,31 @@
+<script setup lang="ts">
+import { computed, onMounted, ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { createMeetingService, type ReviewDetail, type ReviewDraft } from '../services/meetingService'
+import type { UserAccount } from '../services/authService'
+
+const props = defineProps<{ token: string; user: UserAccount }>()
+const route = useRoute(); const router = useRouter(); const service = createMeetingService(props.token)
+const detail = ref<ReviewDetail | null>(null); const loading = ref(true); const error = ref(''); const notice = ref(''); const reason = ref(''); const showReason = ref(false); const selected = ref<string[]>([]); const saving = ref(false)
+const canManage = computed(() => props.user.role === 'manager')
+const draft = ref<ReviewDraft>({ summary: '', decisions: [], tasks: [], risks: [] })
+async function load() { loading.value = true; try { detail.value = await service.getReviewDetail(String(route.params.id)); draft.value = JSON.parse(JSON.stringify(detail.value.draft || detail.value.analysis?.result || draft.value)) } catch (e) { error.value = e instanceof Error ? e.message : '审核详情加载失败' } finally { loading.value = false } }
+async function saveDraft() { if (!detail.value || !canManage.value) return; saving.value = true; try { await service.saveReviewDraft(detail.value.analysis.id, draft.value); notice.value = '草稿已保存' } catch (e) { notice.value = e instanceof Error ? e.message : '保存失败' } finally { saving.value = false } }
+function validateReason() { return reason.value.trim().length >= 1 && reason.value.trim().length <= 500 }
+async function submit(approved: boolean, ids = [detail.value?.analysis?.id].filter(Boolean) as string[]) { if (!canManage.value || !ids.length) return; if (!approved && !validateReason()) { showReason.value = true; return } if (!approved && !window.confirm(`确认驳回 ${ids.length} 条分析？`)) return; try { if (ids.length > 1) await service.reviewBatch(ids, approved, reason.value); else await service.review(ids[0], approved, reason.value); notice.value = approved ? '审核已通过' : '已驳回并记录原因'; showReason.value = false; reason.value = ''; await load() } catch (e) { notice.value = e instanceof Error ? e.message : '审核失败' } }
+async function reanalyze() { if (detail.value && canManage.value && window.confirm('确认重新分析？')) { await service.reanalyze(detail.value.analysis.id); notice.value = '已重新发起分析' } }
+onMounted(load)
+</script>
+
+<template>
+  <section class="page-section review-detail-page">
+    <div v-if="loading" class="panel empty-cell">正在加载审核详情…</div><div v-else-if="error" class="panel empty-cell">{{ error }} <button class="small-button" @click="load">重试</button></div>
+    <template v-else-if="detail">
+      <div class="review-header"><div><p class="eyebrow">AI REVIEW DETAIL</p><h2>{{ detail.meeting.title }}</h2><p class="muted">分析状态：{{ detail.analysis.status }}</p></div><div v-if="canManage" class="page-actions"><button v-if="detail.analysis.status === 'rejected'" class="secondary-button" @click="reanalyze">重新分析</button><button class="primary-button" @click="submit(true)">通过</button><button class="secondary-button" @click="showReason = true">驳回</button></div></div>
+      <p v-if="notice" class="meeting-notice muted">{{ notice }}</p>
+      <div class="analysis-grid"><article class="panel evidence-panel"><div class="panel-heading"><h3>脱敏纪要与证据</h3></div><pre class="evidence-text">{{ detail.meeting.desensitizedContent || detail.meeting.content || '暂无内容' }}</pre><div class="evidence-list"><div v-for="(evidence, index) in detail.evidence" :key="index" class="evidence-snippet"><span class="tag blue">证据 {{ index + 1 }}</span><p>{{ evidence.snippet }}</p><small>位置 {{ evidence.start }}-{{ evidence.end }}</small></div></div></article>
+        <article class="panel detail-panel"><div class="panel-heading"><h3>分析结果与草稿</h3><button v-if="canManage" class="small-button" :disabled="saving" @click="saveDraft">{{ saving ? '保存中…' : '保存草稿' }}</button></div><label class="modal-field"><span>摘要</span><textarea v-model="draft.summary" rows="4" :readonly="!canManage" /></label><div class="section-label">候选任务</div><div v-for="(task, index) in draft.tasks" :key="index" class="draft-task"><input v-if="canManage" v-model="selected" type="checkbox" :value="String(index)" /><input v-model="task.title" :readonly="!canManage" placeholder="任务标题" /><input v-model="task.assignee" :readonly="!canManage" placeholder="负责人" /><select v-model="task.priority" :disabled="!canManage"><option value="urgent">urgent</option><option value="high">high</option><option value="medium">medium</option><option value="low">low</option></select></div><p v-if="canManage" class="muted">已选择 {{ selected.length }} 个候选任务；批量审核会在审核队列中按选中分析项执行。</p><div v-if="!draft.tasks.length" class="empty-cell">暂无候选任务</div></article></div>
+      <div v-if="showReason" class="modal-backdrop" @click.self="showReason = false"><div class="modal"><div class="modal-head"><h3>填写驳回原因</h3><button class="icon-button" @click="showReason = false">×</button></div><label class="modal-field"><span>原因（1-500字）</span><textarea v-model="reason" rows="5" maxlength="500" placeholder="请说明需要修改的内容" /></label><p v-if="reason && !validateReason()" class="muted">驳回原因长度必须为 1-500 字</p><div class="modal-actions"><button class="secondary-button" @click="showReason = false">取消</button><button class="primary-button" :disabled="!validateReason()" @click="submit(false)">确认驳回</button></div></div></div>
+    </template>
+  </section>
+</template>
