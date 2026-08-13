@@ -37,6 +37,22 @@ it('keeps index controls manager-scoped in the existing experiments view', () =>
   expect(appSource).toContain('@click="syncRagIndex"')
 })
 
+it('clears stale RAG status during project changes and blocks sync until readiness is confirmed', () => {
+  expect(appSource).toContain('async function loadRagIndexStatus(projectId: string)')
+  expect(appSource).toContain('ragIndexStatus.value = null')
+  expect(appSource).toContain('ragIndexStatusLoading.value = true')
+  expect(appSource).toContain('if (experimentProjectId.value !== projectId) return')
+  expect(appSource).toContain('!ragIndexStatusLoading.value && ragIndexStatus.value?.configured')
+  expect(appSource).toContain(':disabled="ragIndexSyncing || !ragIndexReady"')
+})
+
+it('renders loading and unknown RAG status separately from an unconfigured baseline', () => {
+  expect(appSource).toContain('v-if="ragIndexStatusLoading"')
+  expect(appSource).toContain('v-else-if="!ragIndexStatus"')
+  expect(appSource).toContain('无法确认 RAG 索引状态')
+  expect(appSource).toContain('v-else-if="!ragIndexStatus.configured"')
+})
+
 it('renders only safe retrieval source identifiers', () => {
   expect(reviewSource).toContain('v-for="source in detail.analysis.executionMetadata?.retrievalSources')
   expect(reviewSource).toContain('source.meetingId')
