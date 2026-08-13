@@ -3,6 +3,7 @@ import { IsBoolean, IsEmail, IsIn, IsInt, IsOptional, IsString, IsUUID, Min, Max
 
 const roles = ['manager', 'member', 'admin', 'auditor'] as const
 const statuses = ['todo', 'in_progress', 'completed', 'closed'] as const
+const projectRoles = ['manager', 'member'] as const
 
 export class RegisterDto {
   @IsIn(roles) role!: typeof roles[number]
@@ -41,6 +42,21 @@ export class CreateMeetingDto {
 
 export class ReviewDto {
   @IsBoolean() approved!: boolean
+  @IsOptional() @IsString() @MinLength(1) reason?: string
+}
+
+export class ImportMeetingDto {
+  @IsUUID() projectId!: string
+  @IsString() @MinLength(1) title!: string
+}
+
+export class ProjectMemberDto {
+  @IsUUID() userId!: string
+  @IsIn(projectRoles) projectRole!: typeof projectRoles[number]
+}
+
+export class ProjectMemberUpdateDto {
+  @IsIn(projectRoles) projectRole!: typeof projectRoles[number]
 }
 
 export class ManagedUserDto {
@@ -58,4 +74,10 @@ export class ManagedUserUpdateDto {
 
 export class ResetPasswordDto {
   @IsString() @MinLength(8) password!: string
+}
+
+export class SystemSettingsDto {
+  @IsString() @MinLength(1) model!: string
+  @IsString() @MinLength(1) mode!: string
+  @IsBoolean() desensitize!: boolean
 }

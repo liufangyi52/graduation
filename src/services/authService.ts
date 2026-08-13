@@ -17,6 +17,12 @@ export interface ManagedUser extends UserAccount {
   created_at: string
 }
 
+export interface SystemSettings {
+  model: string
+  mode: string
+  desensitize: boolean
+}
+
 export interface RegistrationInput {
   role: UserRole
   name: string
@@ -47,6 +53,10 @@ export function canManageProjectBusiness(role: UserRole): boolean {
   return role === 'manager'
 }
 
+export function canUpdateVisibleTasks(role: UserRole): boolean {
+  return role === 'manager' || role === 'member'
+}
+
 export function createAuthService() {
   return {
     register(input: RegistrationInput) {
@@ -72,6 +82,12 @@ export function createAuthService() {
     },
     listAuditLogs(token: string) {
       return request<any[]>('/audit-logs', { headers: { Authorization: `Bearer ${token}` } })
+    },
+    getSystemSettings(token: string) {
+      return request<SystemSettings>('/settings', { headers: { Authorization: `Bearer ${token}` } })
+    },
+    updateSystemSettings(token: string, input: SystemSettings) {
+      return request<SystemSettings>('/settings', { method: 'PATCH', headers: { Authorization: `Bearer ${token}` }, body: JSON.stringify(input) })
     },
     visibleRoutes(role: UserRole) {
       return routeMatrix[role]

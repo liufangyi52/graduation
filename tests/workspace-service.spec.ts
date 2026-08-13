@@ -34,3 +34,16 @@ it('loads task deadlines and meeting dates as calendar events', async () => {
     expect.objectContaining({ id: 'meeting-1', type: 'meeting', date: '2026-08-12', project: 'Alpha' }),
   ])
 })
+
+it('maps server-calculated project progress instead of replacing it with zero', async () => {
+  vi.spyOn(globalThis, 'fetch')
+    .mockResolvedValueOnce(new Response(JSON.stringify([{ id: 'project-1', name: 'Alpha', code: 'A', owner_name: 'Manager', status: 'active', progress: 65, end_date: null, members: 1 }]), { status: 200 }))
+    .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }))
+    .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }))
+    .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }))
+  const service = createWorkspaceService('token')
+
+  await service.load()
+
+  expect(service.state.projects[0].progress).toBe(65)
+})

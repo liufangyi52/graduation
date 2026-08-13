@@ -1,4 +1,5 @@
 import { reactive } from 'vue'
+import { calendarDateFromApiValue } from '../utils/calendar'
 
 export type TaskState = 'todo' | 'in-progress' | 'completed'
 export type RiskLevel = 'high' | 'medium' | 'low'
@@ -9,6 +10,7 @@ export interface Project { id: string; name: string; code: string; owner: string
 export interface Review { id: string; meeting: string; project: string; mode: string; confidence: number; time: string; status: 'pending' | 'approved' | 'rejected' }
 export interface Risk { id: string; title: string; task: string; level: RiskLevel; owner: string; status: '待处理' | '跟进中' | '已处理' }
 export interface MemberFeedback { id: string; taskId: string; author: string; content: string; progress: number; createdAt: string }
+export interface ProjectMember { id: string; name: string; email: string; role: string; is_active: boolean; project_role: 'manager' | 'member' }
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:3000/api'
 const statusMap = { active: '进行中', paused: '暂停', archived: '已归档' } as const
@@ -23,14 +25,14 @@ export function createWorkspaceService(token: string) {
     if (!response.ok) throw new Error(payload.message ?? '请求失败')
     return payload as T
   }
-  const mapProject = (item: any): Project => ({ id: item.id, name: item.name, code: item.code, owner: item.owner_name, state: statusMap[item.status as keyof typeof statusMap] ?? '进行中', progress: 0, deadline: item.end_date ?? '未设置', members: Number(item.members ?? 0) })
+  const mapProject = (item: any): Project => ({ id: item.id, name: item.name, code: item.code, owner: item.owner_name, state: statusMap[item.status as keyof typeof statusMap] ?? '进行中', progress: Number(item.progress ?? 0), deadline: item.end_date ?? '未设置', members: Number(item.members ?? 0) })
   const mapTask = (item: any): Task => ({ id: item.id, title: item.title, project: item.project_name, owner: item.assignee_name, due: item.due_date ?? '未设置', priority: priorityMap[item.priority as keyof typeof priorityMap] ?? '中', state: taskStateMap[item.status as keyof typeof taskStateMap] ?? 'todo', progress: Number(item.progress ?? 0) })
   const mapCalendarEvent = (item: any): CalendarEvent => ({
     id: item.id,
     type: item.type === 'meeting' ? 'meeting' : 'task',
     title: item.title,
     project: item.project_name,
-    date: item.date,
+    date: calendarDateFromApiValue(item.date),
     ...(item.type === 'task' ? {
       owner: item.assignee_name,
       priority: priorityMap[item.priority as keyof typeof priorityMap] ?? '中',
@@ -56,6 +58,11 @@ export function createWorkspaceService(token: string) {
       state.projects.unshift(project)
       return project
     },
+    async listProjectMembers(projectId: string) { return request<ProjectMember[]>(`/projects/${projectId}/members`) },
+    async projectMemberCandidates(projectId: string) { return request<Array<Pick<ProjectMember, 'id' | 'name' | 'email' | 'role'>>>(`/projects/${projectId}/member-candidates`) },
+    async addProjectMember(projectId: string, userId: string, projectRole: 'manager' | 'member') { return request(`/projects/${projectId}/members`, { method: 'POST', body: JSON.stringify({ userId, projectRole }) }) },
+    async updateProjectMemberRole(projectId: string, userId: string, projectRole: 'manager' | 'member') { return request(`/projects/${projectId}/members/${userId}`, { method: 'PATCH', body: JSON.stringify({ projectRole }) }) },
+    async removeProjectMember(projectId: string, userId: string) { return request(`/projects/${projectId}/members/${userId}`, { method: 'DELETE' }) },
     async archiveProject(id: string) {
       await request(`/projects/${id}/archive`, { method: 'PATCH' })
       const project = state.projects.find((item) => item.id === id)

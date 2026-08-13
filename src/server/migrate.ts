@@ -1,8 +1,8 @@
 import { pool } from './database'
 
-async function addColumnIfMissing(column: string, definition: string) {
-  const [rows] = await pool.query<any[]>('SELECT COLUMN_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = "users" AND COLUMN_NAME = ?', [column])
-  if (!rows.length) await pool.query(`ALTER TABLE users ADD COLUMN ${definition}`)
+async function addColumnIfMissing(table: string, column: string, definition: string) {
+  const [rows] = await pool.query<any[]>('SELECT COLUMN_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?', [table, column])
+  if (!rows.length) await pool.query(`ALTER TABLE ${table} ADD COLUMN ${definition}`)
 }
 
 export async function migrate() {
@@ -69,8 +69,8 @@ export async function migrate() {
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT fk_notifications_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
-  await addColumnIfMissing('is_active', 'is_active BOOLEAN NOT NULL DEFAULT TRUE')
-  await addColumnIfMissing('auth_version', 'auth_version INT NOT NULL DEFAULT 0')
+  await addColumnIfMissing('users', 'is_active', 'is_active BOOLEAN NOT NULL DEFAULT TRUE')
+  await addColumnIfMissing('users', 'auth_version', 'auth_version INT NOT NULL DEFAULT 0')
   await pool.query(`CREATE TABLE IF NOT EXISTS meetings (
     id CHAR(36) PRIMARY KEY,
     project_id CHAR(36) NOT NULL,
@@ -95,6 +95,21 @@ export async function migrate() {
     CONSTRAINT fk_analyses_meeting FOREIGN KEY (meeting_id) REFERENCES meetings(id) ON DELETE CASCADE,
     CONSTRAINT fk_analyses_requester FOREIGN KEY (requested_by) REFERENCES users(id)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
+  await pool.query(`CREATE TABLE IF NOT EXISTS meeting_versions (
+    id CHAR(36) PRIMARY KEY,
+    meeting_id CHAR(36) NOT NULL,
+    version_number INT NOT NULL,
+    source_type ENUM('text','txt','docx','restore') NOT NULL,
+    original_content LONGTEXT NOT NULL,
+    desensitized_content LONGTEXT NOT NULL,
+    created_by CHAR(36) NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_meeting_version_number (meeting_id, version_number),
+    CONSTRAINT fk_versions_meeting FOREIGN KEY (meeting_id) REFERENCES meetings(id) ON DELETE CASCADE,
+    CONSTRAINT fk_versions_creator FOREIGN KEY (created_by) REFERENCES users(id)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
+  await addColumnIfMissing('meetings', 'current_version_id', 'current_version_id CHAR(36) NULL')
+  await addColumnIfMissing('ai_analyses', 'rejection_reason', 'rejection_reason VARCHAR(500) NULL')
   await pool.query(`CREATE TABLE IF NOT EXISTS risks (
     id CHAR(36) PRIMARY KEY,
     project_id CHAR(36) NOT NULL,
@@ -119,4 +134,13 @@ export async function migrate() {
     INDEX idx_audit_created_at (created_at),
     CONSTRAINT fk_audit_actor FOREIGN KEY (actor_id) REFERENCES users(id) ON DELETE SET NULL
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
+  await pool.query(`CREATE TABLE IF NOT EXISTS system_settings (
+    id TINYINT PRIMARY KEY,
+    model VARCHAR(100) NOT NULL DEFAULT 'DeepSeek V3',
+    mode VARCHAR(100) NOT NULL DEFAULT 'RAG',
+    desensitize BOOLEAN NOT NULL DEFAULT TRUE,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    CONSTRAINT chk_system_settings_singleton CHECK (id = 1)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
+  await pool.query(`INSERT IGNORE INTO system_settings (id) VALUES (1)`)
 }

@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest'
-import { calendarMonthDays, eventsForCalendarDate, eventsForDate, visibleCalendarEvents } from '../src/utils/calendar'
+import { calendarDateFromApiValue, calendarMonthDays, eventsForCalendarDate, eventsForDate, taskEventsForCalendarDate, visibleCalendarEvents } from '../src/utils/calendar'
 import type { CalendarEvent } from '../src/services/workspaceService'
 
 it('returns only events matching the selected local ISO date', () => {
@@ -21,4 +21,17 @@ it('builds a Monday-first six-week month grid and limits a day to three visible 
   expect(days[41]).toMatchObject({ date: '2026-09-06', inMonth: false })
   expect(visibleCalendarEvents(eventsForCalendarDate(events, '2026-08-12'))).toHaveLength(3)
   expect(eventsForCalendarDate(events, '2026-08-12').slice(3)).toHaveLength(2)
+})
+
+it('returns only task records for a selected day detail dialog', () => {
+  const events = [
+    { id: 'task-1', type: 'task', title: 'Prepare release', project: 'Alpha', date: '2026-08-12', owner: 'Member' },
+    { id: 'meeting-1', type: 'meeting', title: 'Release review', project: 'Alpha', date: '2026-08-12' },
+  ] as CalendarEvent[]
+
+  expect(taskEventsForCalendarDate(events, '2026-08-12')).toEqual([events[0]])
+})
+
+it('normalizes a calendar date returned as a UTC timestamp into the local due date', () => {
+  expect(calendarDateFromApiValue('2026-08-29T16:00:00.000Z')).toBe('2026-08-30')
 })

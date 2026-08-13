@@ -49,6 +49,15 @@ export function eventsForCalendarDate(events: CalendarEvent[], date: string): Ca
   return eventsForDate(events, date)
 }
 
+export function calendarDateFromApiValue(value: string): string {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value
+  return localIsoDate(new Date(value))
+}
+
+export function taskEventsForCalendarDate(events: CalendarEvent[], date: string): CalendarEvent[] {
+  return eventsForCalendarDate(events, date).filter((event) => event.type === 'task')
+}
+
 export function visibleCalendarEvents(events: CalendarEvent[], limit = 3): CalendarEvent[] {
   return events.slice(0, limit)
 }

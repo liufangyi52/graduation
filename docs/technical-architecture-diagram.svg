@@ -1,0 +1,317 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="2200" viewBox="0 0 1600 2200">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#061b3a"/>
+      <stop offset="100%" stop-color="#082a4d"/>
+    </linearGradient>
+    <linearGradient id="orange" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#ff7a1a"/>
+      <stop offset="100%" stop-color="#ff4f0f"/>
+    </linearGradient>
+    <linearGradient id="green" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0d7c69"/>
+      <stop offset="100%" stop-color="#075b50"/>
+    </linearGradient>
+    <linearGradient id="purple" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#a14ce6"/>
+      <stop offset="100%" stop-color="#6d2eb5"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="8" stdDeviation="12" flood-color="#00122a" flood-opacity="0.22"/>
+    </filter>
+    <style>
+      .title { font: 700 36px "Microsoft YaHei", "Noto Sans CJK SC", Arial, sans-serif; fill: #ffffff; }
+      .subtitle { font: 500 18px "Microsoft YaHei", "Noto Sans CJK SC", Arial, sans-serif; fill: #c8d9f2; letter-spacing: 1px; }
+      .layer-cn { font: 700 25px "Microsoft YaHei", "Noto Sans CJK SC", Arial, sans-serif; fill: #ffffff; }
+      .layer-en { font: 700 18px Arial, sans-serif; fill: #ffffff; }
+      .card-title { font: 700 20px "Microsoft YaHei", "Noto Sans CJK SC", Arial, sans-serif; fill: #0f2140; }
+      .card-body { font: 500 16px "Microsoft YaHei", "Noto Sans CJK SC", Arial, sans-serif; fill: #24334d; }
+      .card-small { font: 500 14px "Microsoft YaHei", "Noto Sans CJK SC", Arial, sans-serif; fill: #34445f; }
+      .section-title { font: 700 21px "Microsoft YaHei", "Noto Sans CJK SC", Arial, sans-serif; fill: #075b50; }
+      .white-title { font: 700 21px "Microsoft YaHei", "Noto Sans CJK SC", Arial, sans-serif; fill: #ffffff; }
+      .white-body { font: 500 16px "Microsoft YaHei", "Noto Sans CJK SC", Arial, sans-serif; fill: #f4f7ff; }
+      .muted { font: 500 14px "Microsoft YaHei", "Noto Sans CJK SC", Arial, sans-serif; fill: #e6eefb; }
+      .box { fill: rgba(255,255,255,0.92); stroke: #d6dfec; stroke-width: 1.4; }
+      .green-card { fill: rgba(244,255,250,0.88); stroke: #69b7a8; stroke-width: 1.4; }
+      .blue-card { fill: rgba(244,248,255,0.92); stroke: #b7c7dd; stroke-width: 1.4; }
+      .line { stroke: #8fb4cc; stroke-width: 2; fill: none; marker-end: url(#arrow); }
+    </style>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#8fb4cc"/>
+    </marker>
+  </defs>
+
+  <rect width="1600" height="2200" fill="url(#bg)"/>
+  <text x="800" y="60" text-anchor="middle" class="title">基于会议纪要智能体的任务抽取与项目进度跟踪系统技术架构图</text>
+  <text x="800" y="94" text-anchor="middle" class="subtitle">Meeting Minutes Agent · Task Extraction · Project Progress Tracking</text>
+
+  <!-- Input Layer -->
+  <rect x="18" y="120" width="1564" height="240" rx="16" fill="#f8fbff" filter="url(#shadow)"/>
+  <rect x="18" y="120" width="180" height="240" rx="16" fill="#0b2c59"/>
+  <text x="108" y="217" text-anchor="middle" class="layer-cn">输入层</text>
+  <text x="108" y="252" text-anchor="middle" class="layer-en">Input Layer</text>
+
+  <g transform="translate(225,155)">
+    <rect class="box" width="250" height="160" rx="12"/>
+    <text x="125" y="42" text-anchor="middle" class="card-title">会议纪要文本</text>
+    <text x="125" y="78" text-anchor="middle" class="card-body">粘贴 / 上传 / 导入</text>
+    <text x="125" y="108" text-anchor="middle" class="card-small">结构化与半结构化内容</text>
+  </g>
+  <g transform="translate(490,155)">
+    <rect class="box" width="250" height="160" rx="12"/>
+    <text x="125" y="42" text-anchor="middle" class="card-title">项目基础数据</text>
+    <text x="125" y="78" text-anchor="middle" class="card-body">项目 / 成员 / 角色</text>
+    <text x="125" y="108" text-anchor="middle" class="card-small">计划时间与里程碑</text>
+  </g>
+  <g transform="translate(755,155)">
+    <rect class="box" width="250" height="160" rx="12"/>
+    <text x="125" y="42" text-anchor="middle" class="card-title">任务进度反馈</text>
+    <text x="125" y="78" text-anchor="middle" class="card-body">状态 / 进度 / 问题</text>
+    <text x="125" y="108" text-anchor="middle" class="card-small">成员工作反馈闭环</text>
+  </g>
+  <g transform="translate(1020,155)">
+    <rect class="box" width="250" height="160" rx="12"/>
+    <text x="125" y="42" text-anchor="middle" class="card-title">系统配置</text>
+    <text x="125" y="78" text-anchor="middle" class="card-body">模型 / 脱敏 / 阈值</text>
+    <text x="125" y="108" text-anchor="middle" class="card-small">角色权限策略</text>
+  </g>
+  <g transform="translate(1285,155)">
+    <rect class="box" width="250" height="160" rx="12"/>
+    <text x="125" y="42" text-anchor="middle" class="card-title">历史追踪数据</text>
+    <text x="125" y="78" text-anchor="middle" class="card-body">审计日志 / 通知</text>
+    <text x="125" y="108" text-anchor="middle" class="card-small">正负反馈样本</text>
+  </g>
+
+  <!-- Orchestration Layer -->
+  <rect x="18" y="382" width="1564" height="210" rx="16" fill="#fffaf0" filter="url(#shadow)"/>
+  <rect x="18" y="382" width="180" height="210" rx="16" fill="#f27317"/>
+  <text x="108" y="462" text-anchor="middle" class="layer-cn">Agent 编排层</text>
+  <text x="108" y="497" text-anchor="middle" class="layer-en">Orchestration</text>
+  <text x="108" y="524" text-anchor="middle" class="layer-en">Layer</text>
+  <rect x="420" y="427" width="760" height="120" rx="12" fill="url(#orange)"/>
+  <text x="800" y="475" text-anchor="middle" class="white-title">meetingflow_api / NestJS</text>
+  <text x="800" y="514" text-anchor="middle" class="white-body">REST 接口编排  |  JWT 鉴权  |  RBAC 权限控制  |  AI 调度  |  结果入库</text>
+
+  <!-- Collaboration Layer -->
+  <rect x="18" y="614" width="1564" height="735" rx="16" fill="#f1fffb" filter="url(#shadow)"/>
+  <rect x="18" y="614" width="180" height="735" rx="16" fill="url(#green)"/>
+  <text x="108" y="910" text-anchor="middle" class="layer-cn">Agent 协同层</text>
+  <text x="108" y="948" text-anchor="middle" class="layer-en">Agent</text>
+  <text x="108" y="975" text-anchor="middle" class="layer-en">Collaboration</text>
+  <text x="108" y="1002" text-anchor="middle" class="layer-en">Layer</text>
+
+  <text x="225" y="664" class="section-title">Agent 1：会议纪要接收与校验</text>
+  <g transform="translate(225,685)">
+    <rect class="green-card" width="305" height="115" rx="12"/>
+    <text x="30" y="40" class="card-title">项目归属校验</text>
+    <text x="30" y="72" class="card-small">确认会议所属项目与操作者权限</text>
+  </g>
+  <g transform="translate(550,685)">
+    <rect class="green-card" width="305" height="115" rx="12"/>
+    <text x="30" y="40" class="card-title">内容格式校验</text>
+    <text x="30" y="72" class="card-small">标题、正文、时间、参会信息检查</text>
+  </g>
+  <g transform="translate(875,685)">
+    <rect class="green-card" width="305" height="115" rx="12"/>
+    <text x="30" y="40" class="card-title">脱敏预处理</text>
+    <text x="30" y="72" class="card-small">敏感信息替换与操作留痕</text>
+  </g>
+  <g transform="translate(1200,685)">
+    <rect class="green-card" width="330" height="115" rx="12"/>
+    <text x="30" y="40" class="card-title">版本记录</text>
+    <text x="30" y="72" class="card-small">纪要版本、来源与导入状态保存</text>
+  </g>
+
+  <text x="225" y="848" class="section-title">Agent 2：AI 分析与结构化抽取</text>
+  <g transform="translate(225,870)">
+    <rect class="green-card" width="305" height="115" rx="12"/>
+    <text x="30" y="40" class="card-title">DeepSeek 调用</text>
+    <text x="30" y="72" class="card-small">服务端封装 API Key 与模型参数</text>
+  </g>
+  <g transform="translate(550,870)">
+    <rect class="green-card" width="305" height="115" rx="12"/>
+    <text x="30" y="40" class="card-title">JSON 规范化</text>
+    <text x="30" y="72" class="card-small">摘要、决策、任务、风险结构校验</text>
+  </g>
+  <g transform="translate(875,870)">
+    <rect class="green-card" width="305" height="115" rx="12"/>
+    <text x="30" y="40" class="card-title">候选任务抽取</text>
+    <text x="30" y="72" class="card-small">负责人、截止日期、优先级建议</text>
+  </g>
+  <g transform="translate(1200,870)">
+    <rect class="green-card" width="330" height="115" rx="12"/>
+    <text x="30" y="40" class="card-title">风险识别</text>
+    <text x="30" y="72" class="card-small">延期风险、依赖风险、执行风险</text>
+  </g>
+
+  <text x="225" y="1033" class="section-title">Agent 3：人工审核与任务转化</text>
+  <g transform="translate(225,1055)">
+    <rect class="green-card" width="305" height="115" rx="12"/>
+    <text x="30" y="40" class="card-title">项目经理复核</text>
+    <text x="30" y="72" class="card-small">查看 AI 结果与原文证据</text>
+  </g>
+  <g transform="translate(550,1055)">
+    <rect class="green-card" width="305" height="115" rx="12"/>
+    <text x="30" y="40" class="card-title">通过 / 驳回</text>
+    <text x="30" y="72" class="card-small">支持审核确认与重新分析</text>
+  </g>
+  <g transform="translate(875,1055)">
+    <rect class="green-card" width="305" height="115" rx="12"/>
+    <text x="30" y="40" class="card-title">事务写入</text>
+    <text x="30" y="72" class="card-small">正式任务、风险记录同步生成</text>
+  </g>
+  <g transform="translate(1200,1055)">
+    <rect class="green-card" width="330" height="115" rx="12"/>
+    <text x="30" y="40" class="card-title">通知联动</text>
+    <text x="30" y="72" class="card-small">任务分派与风险提醒进入通知中心</text>
+  </g>
+
+  <text x="225" y="1218" class="section-title">Agent 4：进度跟踪与风险闭环　Agent 5：实验与扩展增强</text>
+  <g transform="translate(225,1240)">
+    <rect class="green-card" width="400" height="85" rx="12"/>
+    <text x="30" y="35" class="card-title">成员反馈闭环</text>
+    <text x="30" y="63" class="card-small">进度更新、问题反馈、状态推进</text>
+  </g>
+  <g transform="translate(650,1240)">
+    <rect class="green-card" width="400" height="85" rx="12"/>
+    <text x="30" y="35" class="card-title">风险处置与审计追踪</text>
+    <text x="30" y="63" class="card-small">风险标记、处理说明、关键操作留痕</text>
+  </g>
+  <g transform="translate(1075,1240)">
+    <rect class="green-card" width="455" height="85" rx="12"/>
+    <text x="30" y="35" class="card-title">RAG / 队列 / 指标评测预留</text>
+    <text x="30" y="63" class="card-small">支持后续检索增强、异步调度与消融实验</text>
+  </g>
+
+  <!-- Model Layer -->
+  <rect x="18" y="1370" width="1564" height="250" rx="16" fill="#fbf7ff" filter="url(#shadow)"/>
+  <rect x="18" y="1370" width="180" height="250" rx="16" fill="#8438c8"/>
+  <text x="108" y="1455" text-anchor="middle" class="layer-cn">AI 与数据层</text>
+  <text x="108" y="1490" text-anchor="middle" class="layer-en">AI Model</text>
+  <text x="108" y="1517" text-anchor="middle" class="layer-en">Data Layer</text>
+
+  <g transform="translate(225,1410)">
+    <rect width="250" height="165" rx="12" fill="url(#purple)"/>
+    <text x="125" y="46" text-anchor="middle" class="white-title">DeepSeek Chat</text>
+    <text x="125" y="83" text-anchor="middle" class="white-body">会议纪要智能分析</text>
+    <text x="125" y="113" text-anchor="middle" class="muted">已实现</text>
+  </g>
+  <g transform="translate(490,1410)">
+    <rect width="250" height="165" rx="12" fill="url(#purple)"/>
+    <text x="125" y="46" text-anchor="middle" class="white-title">MySQL</text>
+    <text x="125" y="83" text-anchor="middle" class="white-body">业务与审计数据存储</text>
+    <text x="125" y="113" text-anchor="middle" class="muted">已实现</text>
+  </g>
+  <g transform="translate(755,1410)">
+    <rect width="250" height="165" rx="12" fill="url(#purple)"/>
+    <text x="125" y="46" text-anchor="middle" class="white-title">JWT + bcryptjs</text>
+    <text x="125" y="83" text-anchor="middle" class="white-body">认证与密码安全</text>
+    <text x="125" y="113" text-anchor="middle" class="muted">已实现</text>
+  </g>
+  <g transform="translate(1020,1410)">
+    <rect width="250" height="165" rx="12" fill="url(#purple)"/>
+    <text x="125" y="46" text-anchor="middle" class="white-title">Redis + BullMQ</text>
+    <text x="125" y="83" text-anchor="middle" class="white-body">缓存与异步任务队列</text>
+    <text x="125" y="113" text-anchor="middle" class="muted">规划扩展</text>
+  </g>
+  <g transform="translate(1285,1410)">
+    <rect width="250" height="165" rx="12" fill="url(#purple)"/>
+    <text x="125" y="46" text-anchor="middle" class="white-title">Qdrant + BGE-M3</text>
+    <text x="125" y="83" text-anchor="middle" class="white-body">向量检索与 RAG 增强</text>
+    <text x="125" y="113" text-anchor="middle" class="muted">规划扩展</text>
+  </g>
+
+  <!-- Output Layer -->
+  <rect x="18" y="1642" width="1564" height="345" rx="16" fill="#f8fbff" filter="url(#shadow)"/>
+  <rect x="18" y="1642" width="180" height="345" rx="16" fill="#1c446d"/>
+  <text x="108" y="1780" text-anchor="middle" class="layer-cn">输出层</text>
+  <text x="108" y="1815" text-anchor="middle" class="layer-en">Output Layer</text>
+  <text x="225" y="1688" class="section-title" fill="#0f2140">分析结果输出：</text>
+
+  <g transform="translate(225,1710)">
+    <rect class="blue-card" width="250" height="115" rx="12"/>
+    <text x="125" y="42" text-anchor="middle" class="card-title">项目工作台</text>
+    <text x="125" y="73" text-anchor="middle" class="card-small">概览 / 待审 / 风险 / 趋势</text>
+  </g>
+  <g transform="translate(490,1710)">
+    <rect class="blue-card" width="250" height="115" rx="12"/>
+    <text x="125" y="42" text-anchor="middle" class="card-title">AI 审核结果</text>
+    <text x="125" y="73" text-anchor="middle" class="card-small">摘要 / 决策 / 候选任务</text>
+  </g>
+  <g transform="translate(755,1710)">
+    <rect class="blue-card" width="250" height="115" rx="12"/>
+    <text x="125" y="42" text-anchor="middle" class="card-title">正式任务清单</text>
+    <text x="125" y="73" text-anchor="middle" class="card-small">负责人 / 截止日 / 进度</text>
+  </g>
+  <g transform="translate(1020,1710)">
+    <rect class="blue-card" width="250" height="115" rx="12"/>
+    <text x="125" y="42" text-anchor="middle" class="card-title">风险中心</text>
+    <text x="125" y="73" text-anchor="middle" class="card-small">风险等级 / 处置状态</text>
+  </g>
+  <g transform="translate(1285,1710)">
+    <rect class="blue-card" width="250" height="115" rx="12"/>
+    <text x="125" y="42" text-anchor="middle" class="card-title">审计日志</text>
+    <text x="125" y="73" text-anchor="middle" class="card-small">全链路操作留痕</text>
+  </g>
+
+  <text x="225" y="1872" class="section-title" fill="#0f2140">后续动作触发：</text>
+  <g transform="translate(225,1895)">
+    <rect width="310" height="70" rx="10" fill="#1c5077"/>
+    <text x="155" y="30" text-anchor="middle" class="white-title">任务分派通知</text>
+    <text x="155" y="54" text-anchor="middle" class="muted">生成成员待办与系统消息</text>
+  </g>
+  <g transform="translate(560,1895)">
+    <rect width="310" height="70" rx="10" fill="#1c5077"/>
+    <text x="155" y="30" text-anchor="middle" class="white-title">进度反馈更新</text>
+    <text x="155" y="54" text-anchor="middle" class="muted">同步任务状态与项目指标</text>
+  </g>
+  <g transform="translate(895,1895)">
+    <rect width="310" height="70" rx="10" fill="#1c5077"/>
+    <text x="155" y="30" text-anchor="middle" class="white-title">风险告警</text>
+    <text x="155" y="54" text-anchor="middle" class="muted">延期与高风险事项提醒</text>
+  </g>
+  <g transform="translate(1230,1895)">
+    <rect width="305" height="70" rx="10" fill="#1c5077"/>
+    <text x="152" y="30" text-anchor="middle" class="white-title">实验指标沉淀</text>
+    <text x="152" y="54" text-anchor="middle" class="muted">样本与反馈用于持续优化</text>
+  </g>
+
+  <!-- Best Practices -->
+  <text x="800" y="2040" text-anchor="middle" class="title" font-size="30">最佳实践 / Best Practices</text>
+  <g transform="translate(30,2070)">
+    <rect width="235" height="78" rx="10" fill="#116b64" stroke="#85dbc8"/>
+    <text x="117" y="32" text-anchor="middle" class="white-title">分层解耦</text>
+    <text x="117" y="58" text-anchor="middle" class="muted">前后端与 AI 边界清晰</text>
+  </g>
+  <g transform="translate(285,2070)">
+    <rect width="235" height="78" rx="10" fill="#116b64" stroke="#85dbc8"/>
+    <text x="117" y="32" text-anchor="middle" class="white-title">权限隔离</text>
+    <text x="117" y="58" text-anchor="middle" class="muted">按角色与项目授权</text>
+  </g>
+  <g transform="translate(540,2070)">
+    <rect width="235" height="78" rx="10" fill="#116b64" stroke="#85dbc8"/>
+    <text x="117" y="32" text-anchor="middle" class="white-title">结构化输出</text>
+    <text x="117" y="58" text-anchor="middle" class="muted">模型结果可校验可落库</text>
+  </g>
+  <g transform="translate(795,2070)">
+    <rect width="235" height="78" rx="10" fill="#116b64" stroke="#85dbc8"/>
+    <text x="117" y="32" text-anchor="middle" class="white-title">事务一致</text>
+    <text x="117" y="58" text-anchor="middle" class="muted">审核后统一写入</text>
+  </g>
+  <g transform="translate(1050,2070)">
+    <rect width="235" height="78" rx="10" fill="#116b64" stroke="#85dbc8"/>
+    <text x="117" y="32" text-anchor="middle" class="white-title">全链路审计</text>
+    <text x="117" y="58" text-anchor="middle" class="muted">关键操作可追溯</text>
+  </g>
+  <g transform="translate(1305,2070)">
+    <rect width="265" height="78" rx="10" fill="#116b64" stroke="#85dbc8"/>
+    <text x="132" y="32" text-anchor="middle" class="white-title">可扩展适配</text>
+    <text x="132" y="58" text-anchor="middle" class="muted">预留 RAG / 队列 / 向量库</text>
+  </g>
+
+  <!-- Major flow arrows -->
+  <path class="line" d="M800 360 L800 420"/>
+  <path class="line" d="M800 592 L800 650"/>
+  <path class="line" d="M800 1349 L800 1405"/>
+  <path class="line" d="M800 1620 L800 1680"/>
+</svg>

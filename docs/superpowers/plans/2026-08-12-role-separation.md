@@ -379,3 +379,4 @@ git log --oneline -3
 ```
 
 Expected: no whitespace errors; role-separation commits are present; only unrelated pre-existing changes, if any, remain outside the planned files.
+
