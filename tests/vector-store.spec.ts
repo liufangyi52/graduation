@@ -2,8 +2,9 @@ import { expect, it, vi } from 'vitest'
 import { QdrantVectorStore, type VectorPoint } from '../src/server/vector-store'
 
 const vector = Array.from({ length: 2560 }, (_, index) => index / 2560)
+const stableHash = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'
 const point: VectorPoint = {
-  id: 'chunk-1',
+  id: stableHash,
   vector,
   payload: {
     projectId: 'project-1',
@@ -55,7 +56,7 @@ it('upserts typed vector points and searches project history while excluding the
   expect(fetchMock).toHaveBeenNthCalledWith(1, 'http://127.0.0.1:6333/collections/meeting_rag_chunks/points?wait=true', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ points: [point] }),
+    body: JSON.stringify({ points: [{ ...point, id: '01234567-89ab-4def-8123-456789abcdef' }] }),
   })
   expect(fetchMock).toHaveBeenNthCalledWith(2, 'http://127.0.0.1:6333/collections/meeting_rag_chunks/points/search', {
     method: 'POST',
@@ -70,6 +71,18 @@ it('upserts typed vector points and searches project history while excluding the
       },
     }),
   })
+})
+
+it('rejects an invalid point ID before making a Qdrant request', async () => {
+  const fetchMock = vi.fn()
+  vi.stubGlobal('fetch', fetchMock)
+  const store = new QdrantVectorStore({ url: 'http://127.0.0.1:6333' })
+
+  await expect(store.upsert([{ ...point, id: 'not-a-sha256-point-id' }])).rejects.toMatchObject({
+    message: 'Vector store is unavailable',
+  })
+  await expect(store.upsert([{ ...point, id: 'not-a-sha256-point-id' }])).rejects.not.toThrow(/not-a-sha256-point-id/)
+  expect(fetchMock).not.toHaveBeenCalled()
 })
 
 it('rejects malformed Qdrant data without exposing its raw response body', async () => {

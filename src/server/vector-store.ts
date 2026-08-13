@@ -51,7 +51,8 @@ export class QdrantVectorStore implements VectorStore {
 
   async upsert(points: VectorPoint[]): Promise<void> {
     if (points.length === 0) return
-    await this.request(`/collections/${COLLECTION_NAME}/points?wait=true`, this.jsonRequest('PUT', { points }))
+    const qdrantPoints = points.map((point) => ({ ...point, id: this.qdrantPointId(point.id) }))
+    await this.request(`/collections/${COLLECTION_NAME}/points?wait=true`, this.jsonRequest('PUT', { points: qdrantPoints }))
   }
 
   async search(vector: number[], query: { projectId: string; excludedVersionId: string; limit: number }): Promise<VectorSearchResult[]> {
@@ -98,6 +99,12 @@ export class QdrantVectorStore implements VectorStore {
 
   private jsonRequest(method: 'POST' | 'PUT', body: unknown): RequestInit {
     return { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }
+  }
+
+  private qdrantPointId(id: string): string {
+    if (!/^[0-9a-f]{64}$/i.test(id)) throw this.unavailable()
+    const normalized = id.toLowerCase()
+    return `${normalized.slice(0, 8)}-${normalized.slice(8, 12)}-4${normalized.slice(13, 16)}-8${normalized.slice(17, 20)}-${normalized.slice(20, 32)}`
   }
 
   private toSearchResult(item: unknown): VectorSearchResult {
