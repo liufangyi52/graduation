@@ -110,6 +110,66 @@ export async function migrate() {
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
   await addColumnIfMissing('meetings', 'current_version_id', 'current_version_id CHAR(36) NULL')
   await addColumnIfMissing('ai_analyses', 'rejection_reason', 'rejection_reason VARCHAR(500) NULL')
+  await addColumnIfMissing('projects', 'deleted_at', 'deleted_at TIMESTAMP NULL')
+  await addColumnIfMissing('projects', 'deleted_by', 'deleted_by CHAR(36) NULL')
+  await addColumnIfMissing('ai_analyses', 'reanalysis_of_id', 'reanalysis_of_id CHAR(36) NULL')
+  await pool.query('CREATE INDEX idx_projects_deleted_owner ON projects (deleted_at, owner_id)')
+    .catch((error: { code?: string }) => { if (error.code !== 'ER_DUP_KEYNAME') throw error })
+  await pool.query('CREATE INDEX idx_tasks_project_status_due ON tasks (project_id, status, due_date)')
+    .catch((error: { code?: string }) => { if (error.code !== 'ER_DUP_KEYNAME') throw error })
+  await pool.query(`CREATE TABLE IF NOT EXISTS project_tags (
+    id CHAR(36) PRIMARY KEY,
+    project_id CHAR(36) NOT NULL,
+    name VARCHAR(60) NOT NULL,
+    created_by CHAR(36) NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_project_tag_name (project_id, name),
+    CONSTRAINT fk_project_tags_project FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+    CONSTRAINT fk_project_tags_creator FOREIGN KEY (created_by) REFERENCES users(id)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
+  await pool.query(`CREATE TABLE IF NOT EXISTS project_tag_links (
+    project_id CHAR(36) NOT NULL,
+    tag_id CHAR(36) NOT NULL,
+    PRIMARY KEY (project_id, tag_id),
+    CONSTRAINT fk_tag_links_project FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+    CONSTRAINT fk_tag_links_tag FOREIGN KEY (tag_id) REFERENCES project_tags(id) ON DELETE CASCADE
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
+  await pool.query(`CREATE TABLE IF NOT EXISTS desensitization_rules (
+    id CHAR(36) PRIMARY KEY,
+    project_id CHAR(36) NOT NULL,
+    name VARCHAR(60) NOT NULL,
+    pattern VARCHAR(500) NOT NULL,
+    replacement VARCHAR(200) NOT NULL,
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    created_by CHAR(36) NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_desensitization_rules_project_enabled_created (project_id, enabled, created_at),
+    CONSTRAINT fk_desensitization_rules_project FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+    CONSTRAINT fk_desensitization_rules_creator FOREIGN KEY (created_by) REFERENCES users(id)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
+  await pool.query(`CREATE TABLE IF NOT EXISTS desensitization_logs (
+    id CHAR(36) PRIMARY KEY,
+    meeting_version_id CHAR(36) NOT NULL,
+    actor_id CHAR(36) NOT NULL,
+    rule_kind ENUM('fixed','custom') NOT NULL,
+    rule_id VARCHAR(64) NOT NULL,
+    hit_count INT UNSIGNED NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_desensitization_logs_version_created (meeting_version_id, created_at),
+    CONSTRAINT fk_desensitization_logs_version FOREIGN KEY (meeting_version_id) REFERENCES meeting_versions(id) ON DELETE CASCADE,
+    CONSTRAINT fk_desensitization_logs_actor FOREIGN KEY (actor_id) REFERENCES users(id)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
+  await pool.query(`CREATE TABLE IF NOT EXISTS task_notes (
+    id CHAR(36) PRIMARY KEY,
+    task_id CHAR(36) NOT NULL,
+    author_id CHAR(36) NOT NULL,
+    content TEXT NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_task_notes_task_created (task_id, created_at),
+    CONSTRAINT fk_task_notes_task FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE,
+    CONSTRAINT fk_task_notes_author FOREIGN KEY (author_id) REFERENCES users(id)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
   await pool.query(`CREATE TABLE IF NOT EXISTS risks (
     id CHAR(36) PRIMARY KEY,
     project_id CHAR(36) NOT NULL,

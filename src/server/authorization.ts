@@ -33,3 +33,15 @@ export function assertFeedbackInput(input: { content?: unknown; progress?: unkno
   if (typeof input.content !== 'string' || !input.content.trim()) throw new Error('Feedback content is required')
   if (!isValidProgress(input.progress)) throw new Error('Invalid feedback progress')
 }
+
+export function assertManagedTaskInput(input: { title?: unknown; assigneeId?: unknown; priority?: unknown; status?: unknown; progress?: unknown }): void {
+  if (typeof input.title !== 'string' || !input.title.trim()) throw new Error('Task title is required')
+  if (typeof input.assigneeId !== 'string' || !input.assigneeId.trim()) throw new Error('Task assignee is required')
+  if (!['low', 'medium', 'high', 'urgent'].includes(String(input.priority))) throw new Error('Invalid task priority')
+  if (input.status !== undefined && !isTaskStatus(input.status)) throw new Error('Invalid task status')
+  if (input.progress !== undefined && !isValidProgress(input.progress)) throw new Error('Invalid task progress')
+}
+
+export function assertTaskStatusTransition(previous: TaskStatus, next: TaskStatus, manager: boolean): void {
+  if ((previous === 'closed' || next === 'closed') && !manager) throw new Error('Only managers can close or reopen tasks')
+}
