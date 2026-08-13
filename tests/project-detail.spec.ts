@@ -1,6 +1,7 @@
 import { afterEach, expect, it, vi } from 'vitest'
 import { AppService } from '../src/server/app.service'
 import { pool } from '../src/server/database'
+import { createWorkspaceService } from '../src/services/workspaceService'
 
 const manager = { id: 'manager-1', role: 'manager' as const, name: 'Manager', email: 'manager@example.com' }
 const member = { id: 'member-1', role: 'member' as const, name: 'Member', email: 'member@example.com' }
@@ -43,4 +44,14 @@ it('allows a member to view only a joined active project and exposes read-only p
 it('does not return a soft-deleted project to a manager', async () => {
   vi.spyOn(pool, 'query').mockResolvedValueOnce([[]] as any)
   await expect(new AppService({} as any).projectDetail(manager, 'deleted-project')).rejects.toThrow('Project does not exist')
+})
+
+it('maps project detail task fields into the typed client shape', async () => {
+  vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
+    project: { id: 'project-1', name: 'Alpha', code: 'A', status: 'active', ownerId: 'manager-1', ownerName: 'Manager', progress: 20 },
+    tasks: [{ id: 'task-1', title: 'Ship', project_id: 'project-1', assignee_id: 'member-1', assignee_name: 'Member', priority: 'high', status: 'todo', progress: 20, due_date: '2026-08-20' }],
+    meetings: [], risks: [], members: [], counts: { tasks: 1, completedTasks: 0, pendingReviews: 0, openRisks: 0, members: 0 }, permissions: { canEdit: false, canCreateTask: false, canManageMembers: false, canManageRisks: false },
+  }), { status: 200 }))
+  const detail = await createWorkspaceService('token').getProjectDetail('project-1')
+  expect(detail.tasks[0]).toEqual(expect.objectContaining({ projectId: 'project-1', assigneeId: 'member-1', assigneeName: 'Member', dueDate: '2026-08-20' }))
 })

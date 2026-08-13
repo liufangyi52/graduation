@@ -14,9 +14,21 @@ export interface ProjectMember { id: string; name: string; email: string; role: 
 export interface ProjectTag { id: string; project_id: string; name: string; linked: boolean }
 export interface DesensitizationRule { id: string; project_id: string; name: string; pattern: string; replacement: string; enabled: boolean }
 export interface TaskNote { id: string; task_id: string; author_id: string; author_name: string; content: string; created_at: string }
+export interface ProjectDetailTask {
+  id: string
+  title: string
+  description?: string
+  projectId: string
+  assigneeId: string
+  assigneeName: string
+  priority: 'low' | 'medium' | 'high' | 'urgent'
+  status: 'todo' | 'in_progress' | 'completed' | 'closed'
+  progress: number
+  dueDate?: string | null
+}
 export interface ProjectDetail {
   project: { id: string; name: string; code: string; description?: string; status: string; startDate?: string; endDate?: string; ownerId: string; ownerName: string; progress: number }
-  tasks: Array<Task & { description?: string; dueDate?: string; assigneeName?: string }>
+  tasks: ProjectDetailTask[]
   meetings: Array<{ id: string; title: string; createdAt: string; versionCount: number; latestAnalysisStatus?: string | null }>
   risks: Array<{ id: string; title: string; description?: string; level: RiskLevel; status: string; createdAt: string; resolvedAt?: string | null }>
   members: ProjectMember[]
@@ -72,7 +84,24 @@ export function createWorkspaceService(token: string) {
       return project
     },
     async updateProject(id: string, input: { name?: string; code?: string; description?: string; endDate?: string | null; status?: 'active' | 'paused' | 'archived' }) { return request(`/projects/${id}`, { method: 'PATCH', body: JSON.stringify(input) }) },
-    async getProjectDetail(projectId: string) { return request<ProjectDetail>(`/projects/${projectId}/detail`) },
+    async getProjectDetail(projectId: string) {
+      const detail = await request<any>(`/projects/${projectId}/detail`)
+      return {
+        ...detail,
+        tasks: (detail.tasks ?? []).map((task: any): ProjectDetailTask => ({
+          id: task.id,
+          title: task.title,
+          description: task.description ?? undefined,
+          projectId: task.project_id ?? task.projectId,
+          assigneeId: task.assignee_id ?? task.assigneeId,
+          assigneeName: task.assignee_name ?? task.assigneeName ?? '',
+          priority: task.priority,
+          status: task.status,
+          progress: Number(task.progress ?? 0),
+          dueDate: task.due_date ?? task.dueDate ?? null,
+        })),
+      } as ProjectDetail
+    },
     async deleteProject(id: string) { return request(`/projects/${id}`, { method: 'DELETE' }) },
     async deletedProjects() { return request<any[]>('/projects/deleted') },
     async restoreProject(id: string) { return request(`/projects/${id}/restore`, { method: 'POST' }) },
