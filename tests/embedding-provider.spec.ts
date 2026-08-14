@@ -1,8 +1,10 @@
-import { expect, it, vi } from 'vitest'
+import { afterEach, expect, it, vi } from 'vitest'
 import { SiliconFlowEmbeddingProvider } from '../src/server/embedding-provider'
 
 const apiKey = 'test-siliconflow-key'
 const vector = Array.from({ length: 2560 }, (_, index) => index / 2560)
+
+afterEach(() => vi.unstubAllEnvs())
 
 function response(body: unknown, ok = true): Response {
   return { ok, json: vi.fn().mockResolvedValue(body) } as unknown as Response
@@ -27,6 +29,8 @@ it('embeds texts through SiliconFlow using the configured model and preserves re
 })
 
 it('requires an explicit non-empty embedding model before reporting configured', () => {
+  vi.stubEnv('EMBEDDING_MODEL', '')
+
   expect(new SiliconFlowEmbeddingProvider({ apiKey }).isConfigured()).toBe(false)
   expect(new SiliconFlowEmbeddingProvider({ apiKey, model: '   ' }).isConfigured()).toBe(false)
   expect(new SiliconFlowEmbeddingProvider({ apiKey, model: 'Qwen/Qwen3-Embedding-4B' }).isConfigured()).toBe(true)
