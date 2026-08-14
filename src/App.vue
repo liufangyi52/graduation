@@ -10,7 +10,7 @@ import {
 import { createWorkspaceService, type CalendarEvent, type DesensitizationRule, type Project, type ProjectMember, type ProjectTag, type RiskLevel, type Task, type TaskNote, type TaskState } from './services/workspaceService'
 import { canManageProjectBusiness, canUpdateVisibleTasks, createAuthService, roleLabels, type ManagedUser, type SystemSettings, type UserAccount, type UserRole } from './services/authService'
 import { createMeetingService } from './services/meetingService'
-import type { MeetingVersion, MeetingVersionSummary } from './services/meetingService'
+import type { AnalysisMode, ExperimentSummary, ExperimentSummaryMetric, MeetingVersion, MeetingVersionSummary, RagIndexStatus } from './services/meetingService'
 import ProjectDetailPage from './components/ProjectDetailPage.vue'
 import MeetingReviewPage from './components/MeetingReviewPage.vue'
 import TaskBoardPage from './components/TaskBoardPage.vue'
@@ -19,6 +19,7 @@ import { calendarMonthDays, eventsForCalendarDate, formatCalendarDate, formatCal
 import { averageTaskProgress } from './utils/progress'
 import { selectDeadlineWatchTasks } from './utils/tasks'
 import { analysisStatusLabel, priorityLabel, projectRoleLabel, projectStatusLabel, riskLevelLabel, riskStatusLabel, systemRoleLabel, taskStatusLabel } from './utils/labels'
+import { createRagExperimentController } from './services/ragExperimentController'
 
 const props = defineProps<{ user: UserAccount; token: string }>()
 const emit = defineEmits<{ logout: [] }>()
@@ -29,6 +30,7 @@ const service = createWorkspaceService(props.token)
 const data = service.state
 const auth = createAuthService()
 const meetings = createMeetingService(props.token)
+const ragExperiments = createRagExperimentController(meetings)
 const isAuditor = computed(() => props.user.role === 'auditor')
 if (props.user.role === 'auditor') {
   void service.loadNotifications().catch(() => flash('通知加载失败'))
@@ -58,6 +60,14 @@ const auditLogs = ref<any[]>([])
 const meetingProjectId = ref('')
 const meetingTitle = ref('')
 const meetingContent = ref('')
+const meetingAnalysisMode = ref<AnalysisMode>('llm')
+const experimentProjectId = ref('')
+const experimentSummary = computed(() => ragExperiments.state.summary)
+const ragIndexStatus = computed(() => ragExperiments.state.status)
+const ragIndexStatusLoading = computed(() => ragExperiments.state.statusLoading)
+const experimentLoading = computed(() => ragExperiments.state.summaryLoading)
+const ragIndexSyncing = computed(() => ragExperiments.state.syncing)
+const experimentNotice = computed(() => ragExperiments.state.notice)
 const meetingNotice = ref('')
 const meetingFile = ref<File | null>(null)
 const meetingVersions = ref<MeetingVersionSummary[]>([])
@@ -87,6 +97,7 @@ const taskAssignees = ref<ProjectMember[]>([])
 const taskNotes = ref<TaskNote[]>([])
 const taskNoteText = ref('')
 const selectedReviewIds = ref<string[]>([])
+const reviewReanalysisMode = ref<AnalysisMode>('llm')
 const roleDraft = ref<UserRole>('member')
 const showCreateUser = ref(false)
 const newUserName = ref('')
@@ -167,7 +178,7 @@ const pendingReviews = computed(() => meetings.state.analyses.filter((analysis) 
   id: analysis.id,
   meeting: analysis.title,
   project: analysis.meetingId,
-  mode: analysis.result?.model ?? 'DeepSeek',
+  mode: analysis.mode,
   confidence: Number(analysis.result?.confidence ?? 0),
   time: analysis.createdAt,
   status: analysis.status,
@@ -204,6 +215,26 @@ const myTasks = computed(() => data.tasks.filter((task) => task.owner === props.
 const calendarDays = computed(() => calendarMonthDays(selectedCalendarMonth.value))
 const selectedCalendarLabel = computed(() => formatCalendarMonth(selectedCalendarMonth.value))
 const selectedCalendarTasks = computed(() => selectedCalendarDay.value ? taskEventsForCalendarDate(data.calendarEvents, selectedCalendarDay.value) : [])
+const experimentModes: Array<{ mode: AnalysisMode; label: string }> = [
+  { mode: 'manual', label: '人工审核' },
+  { mode: 'llm', label: 'LLM' },
+  { mode: 'rag', label: 'RAG' },
+  { mode: 'agent', label: '智能体' },
+]
+const emptyExperimentMetric = (): ExperimentSummaryMetric => ({ runCount: 0, pendingCount: 0, failedCount: 0, approvedCount: 0, rejectedCount: 0, totalDurationMs: 0, averageDurationMs: 0, totalModelCalls: 0 })
+const experimentRows = computed(() => experimentModes.map(({ mode, label }) => ({ mode, label, ...(experimentSummary.value?.[mode] ?? emptyExperimentMetric()) })))
+const experimentRunCount = computed(() => experimentRows.value.reduce((total, item) => total + item.runCount, 0))
+const ragIndexReady = computed(() => ragExperiments.isReady())
+
+async function loadExperimentSummary() {
+  if (!canManageBusiness.value) return
+  await ragExperiments.loadSelectedProject(experimentProjectId.value)
+}
+
+async function syncRagIndex() {
+  if (!canManageBusiness.value || !experimentProjectId.value || !ragIndexReady.value) return
+  await ragExperiments.sync()
+}
 
 watch(() => route.path, (path) => {
   const isScopedWorkflow = (path.startsWith('/projects/') && auth.visibleRoutes(props.user.role).includes('/projects'))
@@ -267,7 +298,7 @@ async function submitMeeting() {
     const meeting = meetingFile.value
       ? await meetings.importFile(meetingProjectId.value, meetingTitle.value.trim(), meetingFile.value)
       : await meetings.create(meetingProjectId.value, meetingTitle.value.trim(), meetingContent.value.trim())
-    await meetings.analyze(meeting.id)
+    await meetings.analyze(meeting.id, meetingAnalysisMode.value)
     await meetings.load()
     await service.loadCalendarEvents()
     meetingTitle.value = ''
@@ -384,8 +415,8 @@ async function submitReviewBatch(approved: boolean) {
   if (!selectedReviewIds.value.length) return flash('请选择待审核分析')
   try { const result = await meetings.reviewBatch(selectedReviewIds.value, approved); selectedReviewIds.value = []; await meetings.load(); await service.load(); flash(result.failed.length ? `${result.succeeded.length} 条已处理，${result.failed.length} 条失败` : '批量审核已完成') } catch (reason) { flash(reason instanceof Error ? reason.message : '批量审核失败') }
 }
-async function reanalyze(id: string) {
-  try { await meetings.reanalyze(id); await meetings.load(); flash('已重新发起分析') } catch (reason) { flash(reason instanceof Error ? reason.message : '重新分析失败') }
+async function reanalyze(id: string, mode: AnalysisMode = reviewReanalysisMode.value) {
+  try { await meetings.reanalyze(id, mode); await meetings.load(); flash('已重新发起分析') } catch (reason) { flash(reason instanceof Error ? reason.message : '重新分析失败') }
 }
 async function openTaskEditor(task?: Task) {
   taskEditor.value = task ?? null
@@ -601,15 +632,15 @@ async function saveSystemSettings() {
 
         <section v-else-if="currentPage === 'notifications'" class="page-section"><div class="filter-bar"><button class="segmented" :class="{ selected: !unreadOnly }" @click="unreadOnly = false">全部通知</button><button class="segmented" :class="{ selected: unreadOnly }" @click="unreadOnly = true">未读通知</button><span class="result-count">{{ filteredNotifications.length }} 条</span></div><div class="notification-list"><article v-for="item in filteredNotifications" :key="item.id" class="notification-item" :class="{ unread: !item.read }" @click="markNotification(item.id, item.path)"><span class="notification-icon"><Bell :size="17" /></span><div><strong>{{ item.title }}</strong><p>{{ item.time }}</p></div><span v-if="!item.read" class="unread-dot"></span><ArrowRight :size="16" class="notification-arrow" /></article></div></section>
 
-        <section v-else-if="currentPage === 'experiments'" class="page-section"><div class="experiment-hero panel"><div><p class="eyebrow">CONTROLLED EVALUATION</p><h2>AI 运行模式对比</h2><p class="muted">实验指标将在接入评测数据源后显示。</p></div><button class="primary-button" disabled title="评测数据源尚未配置"><Zap :size="15" /> 暂不可运行</button></div><article class="panel empty-cell">当前没有可展示的实验运行记录。配置评测数据集和运行队列后，结果会在此持久化展示。</article></section>
+        <section v-else-if="currentPage === 'experiments' && canManageBusiness" class="page-section"><article class="panel"><div class="panel-heading"><div><p class="eyebrow">CONTROLLED EVALUATION</p><h3>四种分析模式实验汇总</h3></div><label class="meeting-field"><span>项目</span><select v-model="experimentProjectId" @change="loadExperimentSummary"><option value="">选择项目</option><option v-for="project in data.projects" :key="project.id" :value="project.id">{{ project.name }}</option></select></label></div><div v-if="experimentProjectId" class="page-actions"><button class="secondary-button" :disabled="ragIndexSyncing || !ragIndexReady" @click="syncRagIndex">{{ ragIndexSyncing ? '同步中…' : '同步 RAG 索引' }}</button><small v-if="ragIndexStatusLoading" class="muted">正在确认 RAG 索引状态。</small><small v-else-if="!ragIndexStatus" class="muted">无法确认 RAG 索引状态，无法同步索引。</small><small v-else-if="!ragIndexStatus.configured" class="muted">RAG 未配置：按无检索基线运行，无法同步索引。</small><small v-else-if="!ragIndexStatus.ready" class="muted">RAG 依赖不可用：请检查 Qdrant 服务。</small><small v-else-if="ragIndexStatus.eligibleVersionCount === 0" class="muted">RAG 已就绪，但该项目没有可索引的脱敏会议版本。</small><small v-else class="muted">RAG 已就绪：{{ ragIndexStatus.eligibleVersionCount }} 个脱敏会议版本可同步。</small></div><div v-if="experimentProjectId" class="metric-grid"><article class="metric-card"><div class="metric-label">运行次数 <TestTube2 :size="16" /></div><div class="metric-number">{{ experimentRunCount }}</div><small>所选项目的全部模式</small></article><article class="metric-card"><div class="metric-label">模式数量 <BarChart3 :size="16" /></div><div class="metric-number">{{ experimentRows.length }}</div><small>零运行模式也会保留</small></article></div><p v-if="experimentNotice" class="meeting-notice muted">{{ experimentNotice }}</p><div v-if="experimentProjectId" class="table-wrap"><table><thead><tr><th>模式</th><th>运行</th><th>待审核</th><th>失败</th><th>通过</th><th>驳回</th><th>平均耗时</th><th>模型调用次数</th></tr></thead><tbody><tr v-for="summary in experimentRows" :key="summary.mode"><td><strong>{{ summary.label }}</strong><small v-if="summary.mode === 'rag'">检索未配置时为无检索基线</small></td><td>{{ summary.runCount }}</td><td>{{ summary.pendingCount }}</td><td>{{ summary.failedCount }}</td><td>{{ summary.approvedCount }}</td><td>{{ summary.rejectedCount }}</td><td>{{ summary.averageDurationMs }} ms</td><td>{{ summary.totalModelCalls }}</td></tr></tbody></table></div><div v-else class="empty-cell">请选择项目以查看实验汇总。</div><div v-if="experimentLoading" class="empty-cell">正在加载实验汇总。</div></article></section>
 
         <section v-else-if="currentPage === 'calendar'" class="page-section"><div class="calendar-toolbar"><button class="icon-button" title="上个月" @click="selectedCalendarMonth = shiftCalendarMonth(selectedCalendarMonth, -1)"><ArrowRight :size="16" class="rotate-180" /></button><div class="calendar-date"><strong>团队日历</strong><span>{{ selectedCalendarLabel }}</span></div><button class="icon-button" title="下个月" @click="selectedCalendarMonth = shiftCalendarMonth(selectedCalendarMonth, 1)"><ArrowRight :size="16" /></button><button class="secondary-button" @click="selectedCalendarMonth = `${localIsoDate(new Date()).slice(0, 7)}-01`">今天</button></div><article class="panel calendar-panel"><div class="calendar-panel-head"><div><p class="eyebrow">MONTHLY SCHEDULE</p><h3>{{ selectedCalendarLabel }}</h3></div><span class="tag gray">任务截止日与会议创建日</span></div><div class="calendar-grid"><div v-for="weekday in ['一', '二', '三', '四', '五', '六', '日']" :key="weekday" class="calendar-weekday">周{{ weekday }}</div><button v-for="day in calendarDays" :key="day.date" class="calendar-day" :class="{ muted: !day.inMonth, today: day.date === localIsoDate(new Date()), 'has-tasks': taskEventsForCalendarDate(data.calendarEvents, day.date).length > 0 }" @click="openCalendarDay(day.date)"><span class="calendar-day-number">{{ Number(day.date.slice(-2)) }}<i v-if="taskEventsForCalendarDate(data.calendarEvents, day.date).length" class="calendar-task-dot"></i></span><span class="calendar-day-events"><span v-for="event in visibleEventsForDay(day.date)" :key="`${event.type}-${event.id}`" class="calendar-event" :class="event.type === 'meeting' ? 'meeting-event' : calendarTagClass(event)" :title="`${event.title} · ${event.project}`">{{ event.title }}</span><span v-if="calendarEventsForDay(day.date).length > 3" class="calendar-more">还有 {{ calendarEventsForDay(day.date).length - 3 }} 条</span></span></button></div></article></section>
 
         <section v-else-if="currentPage === 'efficiency'" class="page-section"><div class="metric-grid compact"><article class="metric-card"><div class="metric-label">已完成任务 <Check :size="16" /></div><div class="metric-number">{{ completedCount }}</div><small>{{ deliveryCycleLabel }}</small></article><article class="metric-card"><div class="metric-label">平均交付周期 <Gauge :size="16" /></div><div class="metric-number">—</div><small>任务记录暂无完整周期数据</small></article><article class="metric-card"><div class="metric-label">活跃成员 <Users :size="16" /></div><div class="metric-number">{{ activeMemberCount }}<span>人</span></div><small>按当前任务负责人统计</small></article></div><div class="analysis-grid"><article class="panel chart-panel"><div class="panel-heading"><div><p class="eyebrow">TEAM DELIVERY</p><h3>团队完成趋势</h3></div><span class="chart-range">暂无时间序列数据</span></div><div class="empty-cell">完成任务后将基于真实更新时间生成趋势。</div></article><article class="panel member-panel"><div class="panel-heading"><div><p class="eyebrow">TEAM LEADERBOARD</p><h3>成员交付效率</h3></div></div><div class="empty-cell">暂无足够的历史数据。</div></article></div></section>
 
         <section v-else-if="currentPage === 'settings'" class="page-section"><div class="settings-layout"><div class="settings-nav panel"><button class="selected">模型与运行模式</button><button>数据脱敏规则</button><button>账号与角色</button><button>通知设置</button></div><article class="panel settings-content"><div class="panel-heading"><div><p class="eyebrow">MODEL PROVIDER</p><h3>模型与运行模式</h3></div><span class="tag green">已持久化</span></div><label class="setting-field"><span>默认模型</span><select v-model="systemSettings.model"><option>DeepSeek V3</option><option>Qwen 2.5</option><option>GPT-4o</option></select></label><label class="setting-field"><span>AI 运行模式</span><select v-model="systemSettings.mode"><option>无 AI</option><option>单轮大模型</option><option>RAG 检索增强</option><option>智能体编排</option></select></label><div class="setting-toggle"><div><strong>会议内容自动脱敏</strong><small>对手机号、邮箱和身份证号进行替换处理</small></div><button class="toggle" :class="{ on: systemSettings.desensitize }" @click="systemSettings.desensitize = !systemSettings.desensitize"><i></i></button></div><button class="primary-button" :disabled="settingsSaving" @click="saveSystemSettings">{{ settingsSaving ? '保存中…' : '保存设置' }}</button></article></div></section>
-        <section v-else-if="currentPage === 'meetings'" class="page-section"><article class="panel"><div class="panel-heading"><div><p class="eyebrow">MEETING MINUTES</p><h3>提交会议纪要并发起 DeepSeek 分析</h3></div><button class="secondary-button" type="button" @click="showMeetingVersions">版本记录</button></div><form class="meeting-form" @submit.prevent="submitMeeting"><label class="meeting-field"><span>所属项目</span><select v-model="meetingProjectId"><option value="">请选择项目</option><option v-for="project in data.projects" :key="project.id" :value="project.id">{{ project.name }}</option></select></label><label class="meeting-field"><span>会议标题</span><input v-model="meetingTitle" placeholder="例如：版本发布评审会" /></label><label class="meeting-field"><span>会议纪要</span><textarea v-model="meetingContent" rows="12" placeholder="粘贴会议纪要内容，DeepSeek 将抽取任务、决策和风险"></textarea></label><label class="meeting-field"><span>或上传 TXT / Word</span><input type="file" accept=".txt,.docx,text/plain,application/vnd.openxmlformats-officedocument.wordprocessingml.document" @change="selectMeetingFile" /><small v-if="meetingFile" class="muted">已选择：{{ meetingFile.name }}</small></label><p v-if="meetingNotice" class="meeting-notice muted">{{ meetingNotice }}</p><button class="primary-button" type="submit"><Zap :size="15" /> 提交并分析</button></form><div v-if="meetingVersions.length" class="meeting-version-list"><div v-for="version in meetingVersions" :key="version.id" class="meeting-version-row"><div><strong>版本 {{ version.versionNumber }}</strong><small>{{ version.sourceType }} · {{ version.createdAt }}</small></div><div><button class="small-button" @click="inspectMeetingVersion(version.id)">查看</button><button class="small-button" @click="restoreMeetingVersion(version.id)">恢复</button></div></div></div></article></section>
-        <section v-else-if="currentPage === 'reviews'" class="page-section"><article class="panel table-panel"><div class="panel-heading"><div><p class="eyebrow">AI REVIEW QUEUE</p><h3>待审核 AI 分析</h3></div><div v-if="canManageBusiness"><button class="small-button" @click="submitReviewBatch(true)">批量通过</button><button class="small-button" @click="submitReviewBatch(false)">批量驳回</button></div></div><div class="table-wrap"><table><thead><tr><th></th><th>会议</th><th>摘要</th><th>任务数</th><th>风险数</th><th>状态</th><th>操作</th></tr></thead><tbody><tr v-for="analysis in meetings.state.analyses" :key="analysis.id"><td><input v-if="analysis.status === 'pending' && canManageBusiness" v-model="selectedReviewIds" type="checkbox" :value="analysis.id" /></td><td><strong>{{ analysis.title }}</strong></td><td>{{ analysis.result?.summary }}</td><td>{{ analysis.result?.tasks?.length ?? 0 }}</td><td>{{ analysis.result?.risks?.length ?? 0 }}</td><td><span class="tag" :class="analysisStatusLabel(analysis.status).tone">{{ analysisStatusLabel(analysis.status).label }}</span></td><td v-if="analysis.status === 'pending'"><button class="small-button" @click="reviewMeetingAnalysis(analysis.id, true)">通过</button><button class="small-button" @click="reviewMeetingAnalysis(analysis.id, false)">驳回</button></td><td v-else><button v-if="analysis.status === 'rejected' && canManageBusiness" class="icon-button" title="重新分析" @click="reanalyze(analysis.id)"><RotateCcw :size="16" /></button><span v-else class="muted">已处理</span></td></tr><tr v-if="!meetings.state.analyses.length"><td colspan="7" class="empty-cell">暂无 AI 分析</td></tr></tbody></table></div></article></section>
+        <section v-else-if="currentPage === 'meetings'" class="page-section"><article class="panel"><div class="panel-heading"><div><p class="eyebrow">MEETING MINUTES</p><h3>提交会议纪要并发起 DeepSeek 分析</h3></div><button class="secondary-button" type="button" @click="showMeetingVersions">版本记录</button></div><form class="meeting-form" @submit.prevent="submitMeeting"><label class="meeting-field"><span>所属项目</span><select v-model="meetingProjectId"><option value="">请选择项目</option><option v-for="project in data.projects" :key="project.id" :value="project.id">{{ project.name }}</option></select></label><label class="meeting-field"><span>会议标题</span><input v-model="meetingTitle" placeholder="例如：版本发布评审会" /></label><label class="meeting-field"><span>分析模式</span><select v-model="meetingAnalysisMode" aria-label="分析模式"><option value="manual">人工审核</option><option value="llm">LLM</option><option value="rag">RAG</option><option value="agent">智能体</option></select></label><label class="meeting-field"><span>会议纪要</span><textarea v-model="meetingContent" rows="12" placeholder="粘贴会议纪要内容，DeepSeek 将抽取任务、决策和风险"></textarea></label><label class="meeting-field"><span>或上传 TXT / Word</span><input type="file" accept=".txt,.docx,text/plain,application/vnd.openxmlformats-officedocument.wordprocessingml.document" @change="selectMeetingFile" /><small v-if="meetingFile" class="muted">已选择：{{ meetingFile.name }}</small></label><p v-if="meetingNotice" class="meeting-notice muted">{{ meetingNotice }}</p><button class="primary-button" type="submit"><Zap :size="15" /> 提交并分析</button></form><div v-if="meetingVersions.length" class="meeting-version-list"><div v-for="version in meetingVersions" :key="version.id" class="meeting-version-row"><div><strong>版本 {{ version.versionNumber }}</strong><small>{{ version.sourceType }} · {{ version.createdAt }}</small></div><div><button class="small-button" @click="inspectMeetingVersion(version.id)">查看</button><button class="small-button" @click="restoreMeetingVersion(version.id)">恢复</button></div></div></div></article></section>
+        <section v-else-if="currentPage === 'reviews'" class="page-section"><article class="panel table-panel"><div class="panel-heading"><div><p class="eyebrow">AI REVIEW QUEUE</p><h3>待审核 AI 分析</h3></div><div v-if="canManageBusiness"><button class="small-button" @click="submitReviewBatch(true)">批量通过</button><button class="small-button" @click="submitReviewBatch(false)">批量驳回</button></div></div><div class="table-wrap"><table><thead><tr><th></th><th>会议</th><th>模式</th><th>摘要</th><th>任务数</th><th>风险数</th><th>调用 / 耗时</th><th>检索</th><th>状态</th><th>操作</th></tr></thead><tbody><tr v-for="analysis in meetings.state.analyses" :key="analysis.id"><td><input v-if="analysis.status === 'pending' && canManageBusiness" v-model="selectedReviewIds" type="checkbox" :value="analysis.id" /></td><td><strong>{{ analysis.title }}</strong></td><td>{{ analysis.mode }}</td><td>{{ analysis.result?.summary }}</td><td>{{ analysis.result?.tasks?.length ?? 0 }}</td><td>{{ analysis.result?.risks?.length ?? 0 }}</td><td>{{ analysis.modelCallCount }} 次 / {{ analysis.durationMs }} ms</td><td>{{ analysis.executionMetadata?.retrievalStatus ?? '-' }}</td><td><span class="tag" :class="analysisStatusLabel(analysis.status).tone">{{ analysisStatusLabel(analysis.status).label }}</span></td><td v-if="analysis.status === 'pending'"><button class="small-button" @click="reviewMeetingAnalysis(analysis.id, true)">通过</button><button class="small-button" @click="reviewMeetingAnalysis(analysis.id, false)">驳回</button></td><td v-else><template v-if="['failed', 'rejected'].includes(analysis.status) && canManageBusiness"><select v-model="reviewReanalysisMode" :aria-label="`重新分析模式：${analysis.title}`"><option value="manual">人工审核</option><option value="llm">LLM</option><option value="rag">RAG</option><option value="agent">智能体</option></select><button class="icon-button" title="重新分析" @click="reanalyze(analysis.id)"><RotateCcw :size="16" /></button></template><span v-else class="muted">已处理</span></td></tr><tr v-if="!meetings.state.analyses.length"><td colspan="10" class="empty-cell">暂无 AI 分析</td></tr></tbody></table></div></article></section>
         <section v-else-if="currentPage === 'users'" class="page-section"><article class="panel table-panel"><div class="panel-heading"><div><p class="eyebrow">ACCOUNT ADMINISTRATION</p><h3>账号与角色</h3></div><button class="primary-button" @click="showCreateUser = true"><Plus :size="15" /> 新增账号</button></div><div class="table-wrap"><table><thead><tr><th>姓名</th><th>邮箱</th><th>角色</th><th>状态</th><th>操作</th></tr></thead><tbody><tr v-for="managed in managedUsers" :key="managed.id"><td>{{ managed.name }}</td><td>{{ managed.email }}</td><td><span class="tag" :class="systemRoleLabel(managed.role).tone">{{ systemRoleLabel(managed.role).label }}</span><select :value="managed.role" @change="auth.updateUser(props.token, managed.id, { role: ($event.target as HTMLSelectElement).value as UserRole }).then(() => managed.role = ($event.target as HTMLSelectElement).value as UserRole)"><option value="manager">项目经理</option><option value="member">项目成员</option><option value="admin">系统管理员</option><option value="auditor">审计员</option></select></td><td><button class="small-button" @click="setManagedUserActive(managed, !managed.is_active)">{{ managed.is_active ? '停用' : '启用' }}</button></td><td><button class="small-button" @click="resetPasswordUser = managed; resetPasswordValue = ''">重置密码</button></td></tr></tbody></table></div></article></section>
         <section v-else-if="currentPage === 'audit-logs'" class="page-section"><article class="panel table-panel"><div class="panel-heading"><div><p class="eyebrow">AUDIT LOGS</p><h3>关键操作记录</h3></div></div><div class="table-wrap"><table><thead><tr><th>时间</th><th>操作者</th><th>操作</th><th>对象</th><th>详情</th></tr></thead><tbody><tr v-for="log in auditLogs" :key="log.id"><td class="mono">{{ log.created_at }}</td><td>{{ log.actor_name ?? '系统' }}</td><td>{{ log.action }}</td><td>{{ log.entity_type }} / {{ log.entity_id ?? '-' }}</td><td>{{ log.details }}</td></tr><tr v-if="!auditLogs.length"><td colspan="5" class="empty-cell">暂无审计记录</td></tr></tbody></table></div></article></section>
       </div>

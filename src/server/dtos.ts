@@ -7,6 +7,7 @@ const activeTaskStatuses = ['todo', 'in_progress', 'completed'] as const
 const projectRoles = ['manager', 'member'] as const
 const projectStatuses = ['active', 'paused', 'archived'] as const
 const priorities = ['low', 'medium', 'high', 'urgent'] as const
+const analysisModes = ['manual', 'llm', 'rag', 'agent'] as const
 
 export class RegisterDto {
   @IsIn(roles) role!: typeof roles[number]
@@ -97,7 +98,7 @@ export class ReviewDraftRiskDto {
 export class ReviewDraftDto {
   @IsString() @MinLength(1) @MaxLength(4000) summary!: string
   @IsArray() @ArrayMaxSize(50) @IsString({ each: true }) decisions!: string[]
-  @IsArray() @ArrayMinSize(1) @ArrayMaxSize(50) @ValidateNested({ each: true }) @Type(() => ReviewDraftTaskDto) tasks!: ReviewDraftTaskDto[]
+  @IsArray() @ArrayMaxSize(50) @ValidateNested({ each: true }) @Type(() => ReviewDraftTaskDto) tasks!: ReviewDraftTaskDto[]
   @IsArray() @ArrayMaxSize(50) @ValidateNested({ each: true }) @Type(() => ReviewDraftRiskDto) risks!: ReviewDraftRiskDto[]
 }
 
@@ -129,6 +130,10 @@ export class TaskNoteDto {
 export class ImportMeetingDto {
   @IsUUID() projectId!: string
   @IsString() @MinLength(1) title!: string
+}
+
+export class AnalysisRequestDto {
+  @IsOptional() @IsIn(analysisModes) mode?: typeof analysisModes[number]
 }
 
 export class ProjectMemberDto {
