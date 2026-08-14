@@ -46,7 +46,10 @@ export interface GanttTask {
   start: string
   end: string
   status: ProjectTaskStatus
+  displayStatus: 'todo' | 'in_progress' | 'completed'
   progress: number
+  deadlineAlert: 'overdue' | 'due_soon' | null
+  deadlineDaysLeft: number | null
   left: number
   width: number
 }
@@ -79,6 +82,20 @@ function calendarDate(value: string): string | null {
 }
 
 function dayNumber(date: string): number { return Date.parse(`${date}T00:00:00Z`) / 86_400_000 }
+
+function normalizeGanttStatus(task: ProjectAnalyticsTask, progress: number): GanttTask['displayStatus'] {
+  if (['completed', 'closed'].includes(task.status) || progress >= 100) return 'completed'
+  if (task.status === 'in_progress' || progress > 0) return 'in_progress'
+  return 'todo'
+}
+
+function deadlineState(task: ProjectAnalyticsTask, end: string, today: string, displayStatus: GanttTask['displayStatus']): Pick<GanttTask, 'deadlineAlert' | 'deadlineDaysLeft'> {
+  if (displayStatus === 'completed') return { deadlineAlert: null, deadlineDaysLeft: null }
+  const deadlineDaysLeft = dayNumber(end) - dayNumber(today)
+  if (deadlineDaysLeft < 0) return { deadlineAlert: 'overdue', deadlineDaysLeft }
+  if (deadlineDaysLeft <= 3) return { deadlineAlert: 'due_soon', deadlineDaysLeft }
+  return { deadlineAlert: null, deadlineDaysLeft }
+}
 
 function calendarDates(start: string, end: string): string[] {
   const days: string[] = []
@@ -125,8 +142,10 @@ export function buildProjectAnalytics(input: ProjectAnalyticsInput, today: strin
       const progress = task.status === 'completed' || task.status === 'closed'
         ? 100
         : Math.min(100, Math.max(0, Number(task.progress ?? 0)))
+      const displayStatus = normalizeGanttStatus(task, progress)
+      const { deadlineAlert, deadlineDaysLeft } = deadlineState(task, end, normalizedToday, displayStatus)
       ganttTasks.push({
-        id: task.id, title: task.title, start, end, status: task.status, progress,
+        id: task.id, title: task.title, start, end, status: task.status, displayStatus, progress, deadlineAlert, deadlineDaysLeft,
         left: Math.round(((dayNumber(start) - dayNumber(ganttRange.start)) / rangeDays) * 100),
         width: Math.min(100, Math.max(1, Math.round(((dayNumber(end) - dayNumber(start) + 1) / rangeDays) * 100))),
       })
