@@ -41,3 +41,8 @@ it('gives the active project detail tab a distinct visual state', () => {
   expect(styles).toContain('font-weight: 700')
   expect(styles).toContain('border-bottom: 2px solid var(--secondary)')
 })
+
+it('formats the project summary deadline without an ISO suffix', () => {
+  expect(source).toContain("import { formatBeijingMinute } from '../utils/date'")
+  expect(source).toContain("{{ detail.project.endDate ? formatBeijingMinute(detail.project.endDate) : '未设置' }}")
+})

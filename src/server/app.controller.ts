@@ -55,6 +55,7 @@ export class AppController {
   @Post('tasks/:id/feedbacks') async feedback(@Headers('authorization') authorization: string | undefined, @Param('id') id: string, @Body() body: FeedbackDto) { return this.app.feedback(await this.user(authorization), id, body) }
   @Get('notifications') async notifications(@Headers('authorization') authorization?: string) { return this.app.notifications(await this.user(authorization)) }
   @Patch('notifications/:id/read') async markNotificationRead(@Headers('authorization') authorization: string | undefined, @Param('id') id: string) { return this.app.markNotificationRead(await this.user(authorization), id) }
+  @Post('notifications/demo') async createRoleDemoNotifications(@Headers('authorization') authorization?: string) { return this.app.createRoleDemoNotifications(await this.user(authorization)) }
   @Patch('projects/:id/archive') async archiveProject(@Headers('authorization') authorization: string | undefined, @Param('id') id: string) { return this.app.archiveProject(await this.user(authorization), id) }
   @Post('meetings') async createMeeting(@Headers('authorization') authorization: string | undefined, @Body() body: CreateMeetingDto) { return this.app.createMeeting(await this.user(authorization), body) }
   @Post('meetings/import') @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 2 * 1024 * 1024 } })) async importMeeting(@Headers('authorization') authorization: string | undefined, @Body() body: ImportMeetingDto, @UploadedFile() file?: UploadedMeetingFile) {

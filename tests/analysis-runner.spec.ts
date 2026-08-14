@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest'
-import { AnalysisExecutionError, AnalysisRunner } from '../src/server/analysis-runner'
+import { AnalysisRunner } from '../src/server/analysis-runner'
 import { DeepSeekService, type MeetingAnalysis } from '../src/server/deepseek.service'
 import { SiliconFlowEmbeddingProvider } from '../src/server/embedding-provider'
 import { RagIndexService } from '../src/server/rag-index.service'

@@ -1,4 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest'
+import { readFileSync } from 'node:fs'
 import { AppService } from '../src/server/app.service'
 import { pool } from '../src/server/database'
 
@@ -21,4 +22,23 @@ it('creates a manually assigned task for an active project member', async () => 
 
 it('rejects a member closing a task', async () => {
   await expect(new AppService({} as any).closeTask(member, 'task-1')).rejects.toThrow('Only managers can close tasks')
+})
+
+it('reads persisted completion timestamps in the visible task list', async () => {
+  const query = vi.spyOn(pool, 'query').mockResolvedValueOnce([[]] as any)
+
+  await new AppService({} as any).tasks(manager)
+
+  expect(query).toHaveBeenCalledWith(expect.stringContaining('t.created_at,t.completed_at'), ['manager-1'])
+  expect(query).not.toHaveBeenCalledWith(expect.stringContaining('audit_logs'), ['manager-1'])
+})
+
+it('records and backfills the first completion time with a supporting audit index', () => {
+  const serviceSource = readFileSync('src/server/app.service.ts', 'utf8')
+  const migrationSource = readFileSync('src/server/migrate.ts', 'utf8')
+
+  expect(serviceSource).toContain("completed_at=CASE WHEN ?='completed' THEN COALESCE(completed_at,CURRENT_TIMESTAMP)")
+  expect(serviceSource).toContain('completed_at=CASE WHEN ?=100 THEN COALESCE(completed_at,CURRENT_TIMESTAMP)')
+  expect(migrationSource).toContain("addColumnIfMissing('tasks', 'completed_at', 'completed_at TIMESTAMP NULL')")
+  expect(migrationSource).toContain('idx_audit_task_completion')
 })

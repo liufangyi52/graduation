@@ -44,11 +44,10 @@ it('clears stale RAG status during project changes and blocks sync until readine
   expect(appSource).toContain(':disabled="ragIndexSyncing || !ragIndexReady"')
 })
 
-it('renders loading and unknown RAG status separately from an unconfigured baseline', () => {
+it('renders loading and unknown RAG status without the unconfigured baseline notice', () => {
   expect(appSource).toContain('v-if="ragIndexStatusLoading"')
   expect(appSource).toContain('v-else-if="!ragIndexStatus"')
-  expect(appSource).toContain('无法确认 RAG 索引状态')
-  expect(appSource).toContain('v-else-if="!ragIndexStatus.configured"')
+  expect(appSource).not.toContain('RAG 未配置：按无检索基线运行，无法同步索引。')
 })
 
 it('renders only safe retrieval source identifiers', () => {

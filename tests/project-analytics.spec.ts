@@ -26,9 +26,9 @@ it('builds project metrics, completion trend, risks, and gantt task groups', () 
     { level: 'high', count: 1 },
   ])
   expect(analytics.ganttTasks).toEqual([
-    { id: 'completed', title: 'Completed', start: '2026-08-01', end: '2026-08-11', status: 'completed', left: 0, width: 92 },
-    { id: 'overdue', title: 'Overdue', start: '2026-08-02', end: '2026-08-12', status: 'in_progress', left: 8, width: 92 },
-    { id: 'closed', title: 'Closed', start: '2026-08-03', end: '2026-08-12', status: 'closed', left: 17, width: 83 },
+    { id: 'completed', title: 'Completed', start: '2026-08-01', end: '2026-08-11', status: 'completed', progress: 100, left: 0, width: 92 },
+    { id: 'overdue', title: 'Overdue', start: '2026-08-02', end: '2026-08-12', status: 'in_progress', progress: 0, left: 8, width: 92 },
+    { id: 'closed', title: 'Closed', start: '2026-08-03', end: '2026-08-12', status: 'closed', progress: 100, left: 17, width: 83 },
   ])
   expect(analytics.undatedTasks).toEqual([
     { id: 'undated', title: 'Undated', status: 'todo' },
@@ -56,6 +56,15 @@ it('does not mark a task due today as overdue when today is an ISO timestamp', (
   expect(analytics.metrics.overdueTasks).toBe(0)
 })
 
+it('carries a member-reported task progress value into the gantt task', () => {
+  const analytics = buildProjectAnalytics({
+    tasks: [{ id: 'member-progress', title: 'Member progress', status: 'in_progress', progress: 45, createdAt: '2026-08-01', dueDate: '2026-08-05' }],
+    risks: [],
+  }, '2026-08-02')
+
+  expect(analytics.ganttTasks[0]).toMatchObject({ id: 'member-progress', progress: 45 })
+})
+
 it('derives date-proportional gantt geometry and remaining-work burndown points', () => {
   const analytics = buildProjectAnalytics({
     tasks: [
@@ -67,8 +76,8 @@ it('derives date-proportional gantt geometry and remaining-work burndown points'
 
   expect(analytics.ganttRange).toEqual({ start: '2026-08-01', end: '2026-08-04', days: 4 })
   expect(analytics.ganttTasks).toEqual([
-    { id: 'first', title: 'First', start: '2026-08-01', end: '2026-08-04', status: 'completed', left: 0, width: 100 },
-    { id: 'second', title: 'Second', start: '2026-08-02', end: '2026-08-03', status: 'in_progress', left: 25, width: 50 },
+    { id: 'first', title: 'First', start: '2026-08-01', end: '2026-08-04', status: 'completed', progress: 100, left: 0, width: 100 },
+    { id: 'second', title: 'Second', start: '2026-08-02', end: '2026-08-03', status: 'in_progress', progress: 0, left: 25, width: 50 },
   ])
   expect(analytics.burndown).toEqual({
     planned: [

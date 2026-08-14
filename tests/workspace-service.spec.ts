@@ -62,3 +62,24 @@ it('maps server-calculated project progress instead of replacing it with zero', 
 
   expect(service.state.projects[0].progress).toBe(65)
 })
+
+it('retains task creation and completion timestamps when loading the workspace', async () => {
+  vi.spyOn(globalThis, 'fetch')
+    .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }))
+    .mockResolvedValueOnce(new Response(JSON.stringify([{
+      id: 'task-1', title: 'Release', project_name: 'Alpha', project_id: 'project-1', assignee_name: 'Member', assignee_id: 'member-1',
+      priority: 'high', status: 'completed', progress: 100, due_date: '2026-08-15',
+      created_at: '2026-08-14T09:00:00.000Z', completed_at: '2026-08-14T10:00:00.000Z',
+    }]), { status: 200 }))
+    .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }))
+    .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }))
+    .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }))
+  const service = createWorkspaceService('token')
+
+  await service.load()
+
+  expect(service.state.tasks[0]).toEqual(expect.objectContaining({
+    createdAt: '2026-08-14T09:00:00.000Z',
+    completedAt: '2026-08-14T10:00:00.000Z',
+  }))
+})

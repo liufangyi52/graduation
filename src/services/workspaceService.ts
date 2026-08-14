@@ -5,12 +5,13 @@ import type { ExportKind, ExportPayload } from '../utils/projectExport'
 export type TaskState = 'todo' | 'in-progress' | 'completed' | 'closed'
 export type RiskLevel = 'high' | 'medium' | 'low'
 
-export interface Task { id: string; title: string; description?: string; project: string; projectId?: string; owner: string; assigneeId?: string; due: string; priority: '紧急' | '高' | '中' | '低'; rawPriority?: 'low' | 'medium' | 'high' | 'urgent'; state: TaskState; progress: number; source?: 'ai-review' }
+export interface Task { id: string; title: string; description?: string; project: string; projectId?: string; owner: string; assigneeId?: string; due: string; priority: '紧急' | '高' | '中' | '低'; rawPriority?: 'low' | 'medium' | 'high' | 'urgent'; state: TaskState; progress: number; source?: 'ai-review'; createdAt: string; completedAt?: string | null }
 export interface CalendarEvent { id: string; type: 'task' | 'meeting'; title: string; project: string; date: string; owner?: string; priority?: Task['priority']; state?: TaskState }
 export interface Project { id: string; name: string; code: string; description?: string; owner: string; state: '进行中' | '暂停' | '已归档'; progress: number; deadline: string; members: number }
 export interface Review { id: string; meeting: string; project: string; mode: string; confidence: number; time: string; status: 'pending' | 'approved' | 'rejected' }
 export interface Risk { id: string; title: string; task: string; level: RiskLevel; owner: string; status: '待处理' | '跟进中' | '已处理' }
 export interface MemberFeedback { id: string; taskId: string; author: string; content: string; progress: number; createdAt: string }
+export interface Notification { id: string; title: string; body?: string; time: string; read: boolean; path: string }
 export interface ProjectMember { id: string; name: string; email: string; role: string; is_active: boolean; project_role: 'manager' | 'member' }
 export interface ProjectTag { id: string; project_id: string; name: string; linked: boolean }
 export interface DesensitizationRule { id: string; project_id: string; name: string; pattern: string; replacement: string; enabled: boolean }
@@ -45,7 +46,7 @@ const priorityMap = { urgent: '紧急', high: '高', medium: '中', low: '低' }
 const taskStateMap = { todo: 'todo', in_progress: 'in-progress', completed: 'completed', closed: 'closed' } as const
 
 export function createWorkspaceService(token: string) {
-  const state = reactive({ projects: [] as Project[], tasks: [] as Task[], overdueTasks: [] as Task[], calendarEvents: [] as CalendarEvent[], reviews: [] as Review[], risks: [] as Risk[], notifications: [] as { id: string; title: string; time: string; read: boolean; path: string }[], feedbacks: [] as MemberFeedback[], settings: { model: 'DeepSeek V3', mode: 'RAG 检索增强', desensitize: true } })
+  const state = reactive({ projects: [] as Project[], tasks: [] as Task[], overdueTasks: [] as Task[], calendarEvents: [] as CalendarEvent[], reviews: [] as Review[], risks: [] as Risk[], notifications: [] as Notification[], feedbacks: [] as MemberFeedback[], settings: { model: 'DeepSeek V3', mode: 'RAG 检索增强', desensitize: true } })
   const request = async <T>(path: string, init: RequestInit = {}) => {
     const response = await fetch(`${apiBaseUrl}${path}`, { ...init, headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, ...init.headers } })
     const payload = await response.json().catch(() => ({}))
@@ -53,7 +54,8 @@ export function createWorkspaceService(token: string) {
     return payload as T
   }
   const mapProject = (item: any): Project => ({ id: item.id, name: item.name, code: item.code, description: item.description ?? undefined, owner: item.owner_name, state: statusMap[item.status as keyof typeof statusMap] ?? '进行中', progress: Number(item.progress ?? 0), deadline: item.end_date ?? '未设置', members: Number(item.members ?? 0) })
-  const mapTask = (item: any): Task => ({ id: item.id, title: item.title, description: item.description ?? undefined, project: item.project_name, projectId: item.project_id, owner: item.assignee_name, assigneeId: item.assignee_id, due: item.due_date ?? '未设置', priority: priorityMap[item.priority as keyof typeof priorityMap] ?? '中', rawPriority: item.priority, state: taskStateMap[item.status as keyof typeof taskStateMap] ?? 'todo', progress: Number(item.progress ?? 0) })
+  const mapTask = (item: any): Task => ({ id: item.id, title: item.title, description: item.description ?? undefined, project: item.project_name, projectId: item.project_id, owner: item.assignee_name, assigneeId: item.assignee_id, due: item.due_date ?? '未设置', priority: priorityMap[item.priority as keyof typeof priorityMap] ?? '中', rawPriority: item.priority, state: taskStateMap[item.status as keyof typeof taskStateMap] ?? 'todo', progress: Number(item.progress ?? 0), createdAt: item.created_at ?? item.createdAt ?? '', completedAt: item.completed_at ?? item.completedAt ?? null })
+  const mapNotification = (item: any): Notification => ({ id: item.id, title: item.title, body: item.body ?? '', time: item.created_at, read: Boolean(item.is_read), path: item.link || '/notifications' })
   const mapCalendarEvent = (item: any): CalendarEvent => ({
     id: item.id,
     type: item.type === 'meeting' ? 'meeting' : 'task',
@@ -70,7 +72,7 @@ export function createWorkspaceService(token: string) {
     state,
     async loadNotifications() {
       const notifications = await request<any[]>('/notifications')
-      state.notifications.splice(0, state.notifications.length, ...notifications.map((item) => ({ id: item.id, title: item.title, time: item.created_at, read: Boolean(item.is_read), path: item.link || '/notifications' })))
+      state.notifications.splice(0, state.notifications.length, ...notifications.map(mapNotification))
     },
     async load() {
       const [projects, tasks, overdueTasks, notifications, risks] = await Promise.all([request<any[]>('/projects'), request<any[]>('/tasks'), request<any[]>('/dashboard/overdue-tasks'), request<any[]>('/notifications'), request<any[]>('/risks')])
@@ -78,7 +80,7 @@ export function createWorkspaceService(token: string) {
       state.tasks.splice(0, state.tasks.length, ...tasks.map(mapTask))
       state.overdueTasks.splice(0, state.overdueTasks.length, ...overdueTasks.map(mapTask))
       state.risks.splice(0, state.risks.length, ...risks.map((item) => ({ id: item.id, title: item.title, task: item.description ?? '', level: item.level, owner: item.project_owner_name ?? '', status: (item.status === 'resolved' ? '已处理' : '待处理') as Risk['status'] })))
-      state.notifications.splice(0, state.notifications.length, ...notifications.map((item) => ({ id: item.id, title: item.title, time: item.created_at, read: Boolean(item.is_read), path: item.link || '/notifications' })))
+      state.notifications.splice(0, state.notifications.length, ...notifications.map(mapNotification))
     },
     async loadCalendarEvents() {
       const items = await request<any[]>('/calendar-events')

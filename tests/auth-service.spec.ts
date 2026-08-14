@@ -24,7 +24,7 @@ it('loads the current user from the authenticated profile endpoint', async () =>
 it('does not expose project business routes to administrators', () => {
   const routes = createAuthService().visibleRoutes('admin')
 
-  expect(routes).toEqual(['/dashboard', '/notifications', '/settings', '/users', '/audit-logs'])
+  expect(routes).toEqual(['/dashboard', '/notifications', '/settings', '/users', '/audit-logs', '/search'])
   expect(routes).not.toContain('/projects')
   expect(routes).not.toContain('/tasks')
   expect(routes).not.toContain('/risks')
@@ -34,7 +34,7 @@ it('does not expose project business routes to administrators', () => {
 
 it('limits auditors to audit workspace, notifications, and audit logs', () => {
   expect(createAuthService().visibleRoutes('auditor'))
-    .toEqual(['/dashboard', '/notifications', '/audit-logs'])
+    .toEqual(['/dashboard', '/notifications', '/audit-logs', '/search'])
 })
 
 it('renders a dedicated auditor dashboard without project management actions', () => {

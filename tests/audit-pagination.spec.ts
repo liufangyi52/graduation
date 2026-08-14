@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest'
-import { paginateAuditLogs, visibleAuditPages } from '../src/utils/auditPagination'
+import { formatAuditLogDetails, paginateAuditLogs, visibleAuditPages } from '../src/utils/auditPagination'
 
 const records = [
   { id: 1 }, { id: 2 }, { id: 3 }, { id: 4 }, { id: 5 }, { id: 6 }, { id: 7 }, { id: 8 },
@@ -54,4 +54,8 @@ it('normalizes non-positive fractional page requests and sizes', () => {
     pageCount: 32,
     total: 32,
   })
+})
+
+it('formats JSON detail objects as compact JSON text', () => {
+  expect(formatAuditLogDetails({ kind: 'meeting', id: 'm-1' })).toBe('{"kind":"meeting","id":"m-1"}')
 })

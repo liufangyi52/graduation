@@ -5,6 +5,7 @@ export interface ProjectAnalyticsTask {
   id: string
   title: string
   status: ProjectTaskStatus
+  progress?: number
   createdAt: string
   dueDate?: string | null
   completedAt?: string | null
@@ -45,6 +46,7 @@ export interface GanttTask {
   start: string
   end: string
   status: ProjectTaskStatus
+  progress: number
   left: number
   width: number
 }
@@ -120,8 +122,11 @@ export function buildProjectAnalytics(input: ProjectAnalyticsInput, today: strin
   const rangeDays = ganttRange ? dayNumber(ganttRange.end) - dayNumber(ganttRange.start) + 1 : 0
   if (ganttRange) {
     for (const { task, start, end } of datedTasks) {
+      const progress = task.status === 'completed' || task.status === 'closed'
+        ? 100
+        : Math.min(100, Math.max(0, Number(task.progress ?? 0)))
       ganttTasks.push({
-        id: task.id, title: task.title, start, end, status: task.status,
+        id: task.id, title: task.title, start, end, status: task.status, progress,
         left: Math.round(((dayNumber(start) - dayNumber(ganttRange.start)) / rangeDays) * 100),
         width: Math.min(100, Math.max(1, Math.round(((dayNumber(end) - dayNumber(start) + 1) / rangeDays) * 100))),
       })
@@ -132,7 +137,7 @@ export function buildProjectAnalytics(input: ProjectAnalyticsInput, today: strin
   const planned = ganttRange ? calendarDates(ganttRange.start, ganttRange.end).map((date, index) => ({ date, remaining: Math.max(0, totalTasks - Math.round((index / Math.max(1, rangeDays - 1)) * totalTasks)) })) : []
   const completedByDate = [...completionDates.entries()].sort(([first], [second]) => first.localeCompare(second))
   const actual = ganttRange && completedByDate.length
-    ? [{ date: ganttRange.start, remaining: totalTasks }, ...completedByDate.filter(([date]) => date >= ganttRange.start).map(([date, count], index) => ({ date, remaining: totalTasks - completedByDate.slice(0, index + 1).reduce((sum, [, value]) => sum + value, 0) }))]
+    ? [{ date: ganttRange.start, remaining: totalTasks }, ...completedByDate.filter(([date]) => date >= ganttRange.start).map(([date], index) => ({ date, remaining: totalTasks - completedByDate.slice(0, index + 1).reduce((sum, [, value]) => sum + value, 0) }))]
     : []
   return {
     metrics: {

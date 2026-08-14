@@ -1,4 +1,6 @@
 import { afterEach, expect, it, vi } from 'vitest'
+import { NestFactory } from '@nestjs/core'
+import { AppModule } from '../src/server/app.module'
 import { AppService } from '../src/server/app.service'
 import { pool } from '../src/server/database'
 
@@ -7,6 +9,15 @@ const otherManager = { ...manager, id: 'manager-2' }
 const member = { id: 'member-1', role: 'member' as const, name: 'Member', email: 'member@example.com' }
 
 afterEach(() => vi.restoreAllMocks())
+
+it('injects the RAG index service into the server application context', async () => {
+  const app = await NestFactory.createApplicationContext(AppModule, { logger: false })
+  try {
+    expect((app.get(AppService) as any).ragIndex).toBeDefined()
+  } finally {
+    await app.close()
+  }
+})
 
 it('synchronizes only current desensitized versions for the project manager', async () => {
   const rag = { isConfigured: vi.fn().mockReturnValue(true), syncVersion: vi.fn().mockResolvedValueOnce({ indexedChunks: 2 }).mockResolvedValueOnce({ indexedChunks: 3 }) }

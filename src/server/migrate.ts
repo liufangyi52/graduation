@@ -128,6 +128,7 @@ export async function migrate() {
   await addColumnIfMissing('ai_analyses', 'finished_at', 'finished_at TIMESTAMP NULL')
   await addColumnIfMissing('ai_analyses', 'duration_ms', 'duration_ms INT NULL')
   await addColumnIfMissing('ai_analyses', 'model_call_count', 'model_call_count INT NOT NULL DEFAULT 0')
+  await addColumnIfMissing('tasks', 'completed_at', 'completed_at TIMESTAMP NULL')
   await pool.query('CREATE INDEX idx_projects_deleted_owner ON projects (deleted_at, owner_id)')
     .catch((error: { code?: string }) => { if (error.code !== 'ER_DUP_KEYNAME') throw error })
   await pool.query('CREATE INDEX idx_tasks_project_status_due ON tasks (project_id, status, due_date)')
@@ -209,6 +210,13 @@ export async function migrate() {
     INDEX idx_audit_created_at (created_at),
     CONSTRAINT fk_audit_actor FOREIGN KEY (actor_id) REFERENCES users(id) ON DELETE SET NULL
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
+  await pool.query('CREATE INDEX idx_audit_task_completion ON audit_logs (entity_type, entity_id, action, created_at)')
+    .catch((error: { code?: string }) => { if (error.code !== 'ER_DUP_KEYNAME') throw error })
+  await pool.query(`UPDATE tasks t SET completed_at=(
+    SELECT MIN(l.created_at) FROM audit_logs l
+    WHERE (l.entity_type='task' AND l.entity_id=t.id AND l.action IN ('task.created','task.updated') AND JSON_UNQUOTE(JSON_EXTRACT(l.details,'$.status'))='completed')
+      OR (l.action='task.feedback_created' AND JSON_UNQUOTE(JSON_EXTRACT(l.details,'$.taskId'))=t.id AND JSON_EXTRACT(l.details,'$.progress')=100)
+  ) WHERE t.status='completed' AND t.completed_at IS NULL`)
   await pool.query(`CREATE TABLE IF NOT EXISTS system_settings (
     id TINYINT PRIMARY KEY,
     model VARCHAR(100) NOT NULL DEFAULT 'DeepSeek V3',

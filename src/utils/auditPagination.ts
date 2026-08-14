@@ -11,6 +11,13 @@ function positiveInteger(value: number, fallback: number): number {
   return Math.max(1, Math.floor(value))
 }
 
+export function formatAuditLogDetails(details: unknown): string {
+  if (details === null || details === undefined) return ''
+  if (typeof details === 'string') return details
+
+  return JSON.stringify(details) ?? String(details)
+}
+
 export function paginateAuditLogs<T>(
   items: readonly T[],
   requestedPage = 1,

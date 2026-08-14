@@ -23,6 +23,11 @@ export interface SystemSettings {
   desensitize: boolean
 }
 
+export interface RoleDemoNotificationResult {
+  created: number
+  missingRoles: UserRole[]
+}
+
 export interface RegistrationInput {
   role: UserRole
   name: string
@@ -43,10 +48,10 @@ async function request<T>(path: string, init: RequestInit = {}) {
 }
 
 const routeMatrix: Record<UserRole, string[]> = {
-  manager: ['/dashboard', '/projects', '/tasks', '/risks', '/notifications', '/experiments', '/calendar', '/efficiency', '/meetings', '/reviews'],
-  member: ['/dashboard', '/projects', '/tasks', '/my-tasks', '/notifications'],
-  admin: ['/dashboard', '/notifications', '/settings', '/users', '/audit-logs'],
-  auditor: ['/dashboard', '/notifications', '/audit-logs'],
+  manager: ['/dashboard', '/projects', '/tasks', '/risks', '/notifications', '/experiments', '/calendar', '/efficiency', '/meetings', '/reviews', '/search'],
+  member: ['/dashboard', '/projects', '/tasks', '/my-tasks', '/notifications', '/search'],
+  admin: ['/dashboard', '/notifications', '/settings', '/users', '/audit-logs', '/search'],
+  auditor: ['/dashboard', '/notifications', '/audit-logs', '/search'],
 }
 
 export function canManageProjectBusiness(role: UserRole): boolean {
@@ -88,6 +93,9 @@ export function createAuthService() {
     },
     updateSystemSettings(token: string, input: SystemSettings) {
       return request<SystemSettings>('/settings', { method: 'PATCH', headers: { Authorization: `Bearer ${token}` }, body: JSON.stringify(input) })
+    },
+    createRoleDemoNotifications(token: string) {
+      return request<RoleDemoNotificationResult>('/notifications/demo', { method: 'POST', headers: { Authorization: `Bearer ${token}` } })
     },
     visibleRoutes(role: UserRole) {
       return routeMatrix[role]

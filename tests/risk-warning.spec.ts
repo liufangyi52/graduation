@@ -17,7 +17,7 @@ it('creates an overdue warning only when an identical open risk does not already
 
   await new AppService({} as any).updateTask(manager, 'task-1', { progress: 50 })
 
-  expect(execute).toHaveBeenCalledWith(expect.stringContaining('INSERT INTO risks'), expect.arrayContaining(['任务逾期：task-1']))
+  expect(execute).toHaveBeenCalledWith(expect.stringContaining('INSERT INTO risks'), expect.arrayContaining(['任务逾期：Release']))
   expect(execute).toHaveBeenCalledWith(expect.stringContaining('INSERT INTO notifications'), expect.arrayContaining(['member-1', '任务逾期：Release', '/my-tasks']))
 })
 

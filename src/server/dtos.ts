@@ -2,7 +2,6 @@ import { Type } from 'class-transformer'
 import { ArrayMaxSize, ArrayMinSize, IsArray, IsBoolean, IsDateString, IsEmail, IsIn, IsInt, IsOptional, IsString, IsUUID, Max, MaxLength, Min, MinLength, ValidateNested } from 'class-validator'
 
 const roles = ['manager', 'member', 'admin', 'auditor'] as const
-const statuses = ['todo', 'in_progress', 'completed', 'closed'] as const
 const activeTaskStatuses = ['todo', 'in_progress', 'completed'] as const
 const projectRoles = ['manager', 'member'] as const
 const projectStatuses = ['active', 'paused', 'archived'] as const

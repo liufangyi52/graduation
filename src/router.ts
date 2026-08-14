@@ -16,6 +16,7 @@ export default createRouter({
     { path: '/my-tasks', name: 'my-tasks', component: EmptyRoute },
     { path: '/risks', name: 'risks', component: EmptyRoute },
     { path: '/notifications', name: 'notifications', component: EmptyRoute },
+    { path: '/search', name: 'search', component: EmptyRoute },
     { path: '/experiments', name: 'experiments', component: EmptyRoute },
     { path: '/settings', name: 'settings', component: EmptyRoute },
     { path: '/calendar', name: 'calendar', component: EmptyRoute },
