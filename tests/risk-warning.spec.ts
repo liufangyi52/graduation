@@ -30,6 +30,7 @@ it('includes the owning project manager when listing risks', async () => {
   await new AppService({} as any).risks({ id: 'admin-1', role: 'admin', name: 'Admin', email: 'admin@example.com' })
 
   expect(query).toHaveBeenCalledWith(expect.stringContaining('u.name project_owner_name'))
+  expect(query).toHaveBeenCalledWith(expect.stringContaining('t.title task_title'))
   expect(query).toHaveBeenCalledWith(expect.stringContaining('JOIN users u ON u.id=p.owner_id'))
 })
 
@@ -41,6 +42,7 @@ it('limits member risks to those linked to the member task', async () => {
   expect(risks).toEqual([{ id: 'member-risk', task_id: 'member-task' }])
   expect(query).toHaveBeenCalledWith(expect.stringContaining('JOIN tasks t ON t.id=r.task_id'), ['member-1'])
   expect(query).toHaveBeenCalledWith(expect.stringContaining('t.assignee_id=?'), ['member-1'])
+  expect(query).toHaveBeenCalledWith(expect.stringContaining('t.title task_title'), ['member-1'])
 })
 
 it('labels the risk-list owner column as the project owner', () => {
@@ -54,4 +56,9 @@ it('does not expose internal risk identifiers in the risk list', () => {
   const source = readFileSync(new URL('../src/App.vue', import.meta.url), 'utf8')
 
   expect(source).not.toContain('<small class="mono">{{ risk.id }}</small>')
+})
+
+it('renders a project-level fallback when a risk has no linked task title', () => {
+  const source = readFileSync(new URL('../src/App.vue', import.meta.url), 'utf8')
+  expect(source).toContain("risk.task || '项目级风险'")
 })

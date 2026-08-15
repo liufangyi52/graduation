@@ -40,7 +40,7 @@ const filtered = computed(() => tasks.value.filter((task) =>
   && (!filters.value.assignee || task.assigneeId === filters.value.assignee)
   && (!filters.value.status || task.state === filters.value.status)
   && (!filters.value.priority || task.rawPriority === filters.value.priority)
-  && (!filters.value.risk || service.state.risks.some((risk) => risk.status !== '已处理' && `${risk.title}${risk.task}`.includes(task.id)))
+  && (!filters.value.risk || service.state.risks.some((risk) => risk.status !== '已处理' && risk.taskId === task.id))
   && (!filters.value.dueFrom || task.due >= filters.value.dueFrom)
   && (!filters.value.dueTo || task.due <= filters.value.dueTo),
 ))

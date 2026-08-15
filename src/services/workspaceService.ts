@@ -9,7 +9,7 @@ export interface Task { id: string; title: string; description?: string; project
 export interface CalendarEvent { id: string; type: 'task' | 'meeting'; title: string; project: string; date: string; owner?: string; priority?: Task['priority']; state?: TaskState }
 export interface Project { id: string; name: string; code: string; description?: string; owner: string; state: '进行中' | '暂停' | '已归档'; progress: number; deadline: string; members: number }
 export interface Review { id: string; meeting: string; project: string; mode: string; confidence: number; time: string; status: 'pending' | 'approved' | 'rejected' }
-export interface Risk { id: string; title: string; task: string; level: RiskLevel; owner: string; status: '待处理' | '跟进中' | '已处理' }
+export interface Risk { id: string; title: string; task: string; taskId?: string; description?: string; level: RiskLevel; owner: string; status: '待处理' | '跟进中' | '已处理' }
 export interface MemberFeedback { id: string; taskId: string; author: string; content: string; progress: number; createdAt: string }
 export interface Notification { id: string; title: string; body?: string; time: string; read: boolean; path: string }
 export interface ProjectMember { id: string; name: string; email: string; role: string; is_active: boolean; project_role: 'manager' | 'member' }
@@ -83,7 +83,7 @@ export function createWorkspaceService(token: string) {
       state.projects.splice(0, state.projects.length, ...projects.map(mapProject))
       state.tasks.splice(0, state.tasks.length, ...tasks.map(mapTask))
       state.overdueTasks.splice(0, state.overdueTasks.length, ...overdueTasks.map(mapTask))
-      state.risks.splice(0, state.risks.length, ...risks.map((item) => ({ id: item.id, title: item.title, task: item.description ?? '', level: item.level, owner: item.project_owner_name ?? '', status: (item.status === 'resolved' ? '已处理' : '待处理') as Risk['status'] })))
+      state.risks.splice(0, state.risks.length, ...risks.map((item) => ({ id: item.id, title: item.title, taskId: item.task_id ?? undefined, task: item.task_title ?? '', description: item.description ?? undefined, level: item.level, owner: item.project_owner_name ?? '', status: (item.status === 'resolved' ? '已处理' : '待处理') as Risk['status'] })))
       state.notifications.splice(0, state.notifications.length, ...notifications.map(mapNotification))
     },
     async loadCalendarEvents() {

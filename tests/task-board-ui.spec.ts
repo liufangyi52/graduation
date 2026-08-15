@@ -36,6 +36,11 @@ it('sends a reminder rather than changing an unfinished task from the board', ()
   expect(source).toContain("props.user.role === 'manager'")
 })
 
+it('filters open risks by the persisted task relationship', () => {
+  expect(source).toContain("risk.taskId === task.id")
+  expect(source).not.toContain('`${risk.title}${risk.task}`.includes(task.id)')
+})
+
 it('keeps task filters inside a responsive board-specific grid', () => {
   expect(source).toContain('class="risk-filter"')
   expect(source).toContain('class="date-filter"')

@@ -41,12 +41,27 @@ it('maps each risk to its project owner returned by the API', async () => {
     .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }))
     .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }))
     .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }))
-    .mockResolvedValueOnce(new Response(JSON.stringify([{ id: 'risk-1', title: 'Dependency', description: 'Waiting', level: 'medium', status: 'open', project_owner_name: 'Manager' }]), { status: 200 }))
+    .mockResolvedValueOnce(new Response(JSON.stringify([{ id: 'risk-1', title: 'Dependency', description: 'Waiting', task_id: 'task-1', task_title: 'Release checklist', level: 'medium', status: 'open', project_owner_name: 'Manager' }]), { status: 200 }))
   const service = createWorkspaceService('token')
 
   await service.load()
 
   expect(service.state.risks[0].owner).toBe('Manager')
+  expect(service.state.risks[0]).toMatchObject({ taskId: 'task-1', task: 'Release checklist', description: 'Waiting' })
+})
+
+it('keeps an unlinked risk separate from its description', async () => {
+  vi.spyOn(globalThis, 'fetch')
+    .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }))
+    .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }))
+    .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }))
+    .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }))
+    .mockResolvedValueOnce(new Response(JSON.stringify([{ id: 'risk-2', title: 'Scope', description: 'No formal task', task_id: null, task_title: null, level: 'low', status: 'open', project_owner_name: 'Manager' }]), { status: 200 }))
+  const service = createWorkspaceService('token')
+
+  await service.load()
+
+  expect(service.state.risks[0]).toMatchObject({ taskId: undefined, task: '', description: 'No formal task' })
 })
 
 it('maps server-calculated project progress instead of replacing it with zero', async () => {
