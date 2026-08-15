@@ -30,7 +30,9 @@ it('uploads a meeting file as multipart data without forcing a JSON content type
 
 it('does not include a rejection reason in the audit event', async () => {
   const manager = { id: 'manager-1', role: 'manager' as const, name: 'Manager', email: 'manager@example.com' }
-  const connection = { beginTransaction: vi.fn(), commit: vi.fn(), rollback: vi.fn(), release: vi.fn(), query: vi.fn().mockResolvedValueOnce([[]]), execute: vi.fn() }
+  const connection = { beginTransaction: vi.fn(), commit: vi.fn(), rollback: vi.fn(), release: vi.fn(), query: vi.fn()
+    .mockResolvedValueOnce([[{ id: 'analysis-1', project_id: 'project-1', title: 'Minutes', status: 'pending', owner_id: 'manager-1', owner_is_active: 1, owner_role: 'manager', result_json: JSON.stringify({ summary: 'x', decisions: [], tasks: [], risks: [] }) }]])
+    .mockResolvedValueOnce([[]]), execute: vi.fn() }
   vi.spyOn(pool, 'query')
     .mockResolvedValueOnce([[{ id: 'analysis-1', project_id: 'project-1', status: 'pending', result_json: JSON.stringify({ summary: 'x', decisions: [], tasks: [], risks: [] }) }]] as any)
     .mockResolvedValueOnce([[{ owner_id: 'manager-1' }]] as any)
@@ -48,8 +50,8 @@ it('notifies the matching project member when an approved analysis creates a tas
   const connection = {
     beginTransaction: vi.fn(), commit: vi.fn(), rollback: vi.fn(), release: vi.fn(), execute: vi.fn(),
     query: vi.fn()
+      .mockResolvedValueOnce([[{ id: 'analysis-1', project_id: 'project-1', title: 'Minutes', status: 'pending', owner_id: 'manager-1', owner_is_active: 1, owner_role: 'manager', result_json: JSON.stringify({ summary: 'x', decisions: [], tasks: [{ title: 'Prepare release', priority: 'high', owner_email: 'member@example.com' }], risks: [] }) }]])
       .mockResolvedValueOnce([[]])
-      .mockResolvedValueOnce([[{ owner_id: 'manager-1' }]])
       .mockResolvedValueOnce([[{ id: 'member-1' }]]),
   }
   vi.spyOn(pool, 'query')
@@ -70,7 +72,9 @@ it('notifies the project owner when an approved task has no matching member', as
   const manager = { id: 'manager-1', role: 'manager' as const, name: 'Manager', email: 'manager@example.com' }
   const connection = {
     beginTransaction: vi.fn(), commit: vi.fn(), rollback: vi.fn(), release: vi.fn(), execute: vi.fn(),
-    query: vi.fn().mockResolvedValueOnce([[]]).mockResolvedValueOnce([[{ owner_id: 'manager-1' }]]),
+    query: vi.fn()
+      .mockResolvedValueOnce([[{ id: 'analysis-1', project_id: 'project-1', title: 'Minutes', status: 'pending', owner_id: 'manager-1', owner_is_active: 1, owner_role: 'manager', result_json: JSON.stringify({ summary: 'x', decisions: [], tasks: [{ title: 'Prepare release', priority: 'high' }], risks: [] }) }]])
+      .mockResolvedValueOnce([[]]),
   }
   vi.spyOn(pool, 'query')
     .mockResolvedValueOnce([[{ id: 'analysis-1', project_id: 'project-1', status: 'pending', result_json: JSON.stringify({ summary: 'x', decisions: [], tasks: [{ title: 'Prepare release', priority: 'high' }], risks: [] }) }]] as any)

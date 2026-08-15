@@ -1025,31 +1025,42 @@ export class AppService {
     const [rows] = await pool.query<any[]>('SELECT a.*,m.project_id,m.title meeting_title FROM ai_analyses a JOIN meetings m ON m.id=a.meeting_id WHERE a.id=?', [analysisId])
     if (!rows[0]) throw new BadRequestException('Analysis does not exist')
     await this.assertProjectManager(user, rows[0].project_id)
-    if (rows[0].status !== 'pending') throw new BadRequestException('Analysis has already been reviewed')
     if (!approved && (!reason?.trim() || reason.trim().length > 500)) throw new BadRequestException('Review reason must contain 1 to 500 characters')
     if (approved && reason !== undefined && (!reason.trim() || reason.trim().length > 500)) throw new BadRequestException('Review reason must contain 1 to 500 characters')
     const connection = await pool.getConnection()
     try {
       await connection.beginTransaction()
+      const [lockedRows] = await connection.query<any[]>(`SELECT a.*,m.project_id,m.title meeting_title,p.owner_id,
+          owner.is_active owner_is_active,owner.role owner_role
+        FROM ai_analyses a
+        JOIN meetings m ON m.id=a.meeting_id
+        JOIN projects p ON p.id=m.project_id
+        JOIN users owner ON owner.id=p.owner_id
+        WHERE a.id=? AND p.deleted_at IS NULL
+        FOR UPDATE`, [analysisId])
+      const locked = lockedRows[0]
+      if (!locked) throw new BadRequestException('Analysis does not exist')
+      if (locked.owner_id !== user.id) throw new ForbiddenException('You do not manage this project')
+      if (locked.status !== 'pending') throw new BadRequestException('Analysis has already been reviewed')
       const [draftRows] = await connection.query<any[]>('SELECT draft_json FROM ai_analysis_drafts WHERE analysis_id=? FOR UPDATE', [analysisId])
-      const result = draftRows[0]?.draft_json ? normalizeStoredAnalysis(draftRows[0].draft_json) : normalizeStoredAnalysis(rows[0].result_json)
+      const result = draftRows[0]?.draft_json ? normalizeStoredAnalysis(draftRows[0].draft_json) : normalizeStoredAnalysis(locked.result_json)
       this.assertRiskTaskReferences(result)
       await connection.execute('UPDATE ai_analyses SET status=?,reviewed_by=?,reviewed_at=CURRENT_TIMESTAMP,rejection_reason=? WHERE id=?', [approved ? 'approved' : 'rejected', user.id, approved ? null : reason?.trim() ?? null, analysisId])
       if (approved) {
-        const [projectManagers] = await connection.query<any[]>('SELECT owner_id FROM projects WHERE id=?', [rows[0].project_id])
-        const fallbackAssignee = projectManagers[0]?.owner_id ?? user.id
+        const fallbackAssignee = locked.owner_is_active && locked.owner_role === 'manager' ? locked.owner_id : null
+        if (!fallbackAssignee) throw new BadRequestException('Project owner is not an active task assignee')
         const createdTaskIds: string[] = []
         for (const task of result.tasks) {
-          const [assignees] = task.owner_email ? await connection.query<any[]>('SELECT u.id FROM users u JOIN project_members pm ON pm.user_id=u.id WHERE pm.project_id=? AND u.email=?', [rows[0].project_id, task.owner_email]) : [[]]
+          const [assignees] = task.owner_email ? await connection.query<any[]>('SELECT u.id,u.is_active,u.role FROM users u JOIN project_members pm ON pm.user_id=u.id WHERE pm.project_id=? AND u.email=? AND u.is_active=TRUE AND u.role IN ("manager","member")', [locked.project_id, task.owner_email]) : [[]]
           const assigneeId = assignees[0]?.id ?? fallbackAssignee
           const taskId = randomUUID()
           createdTaskIds.push(taskId)
-          await connection.execute('INSERT INTO tasks (id,title,description,project_id,assignee_id,priority,status,progress,due_date) VALUES (?,?,?,?,?,?,?,?,?)', [taskId, task.title, task.description ?? null, rows[0].project_id, assigneeId, task.priority, 'todo', 0, task.due_date ?? null])
+          await connection.execute('INSERT INTO tasks (id,title,description,project_id,assignee_id,priority,status,progress,due_date) VALUES (?,?,?,?,?,?,?,?,?)', [taskId, task.title, task.description ?? null, locked.project_id, assigneeId, task.priority, 'todo', 0, task.due_date ?? null])
           await connection.execute('INSERT INTO notifications (id,user_id,title,body,link) VALUES (?,?,?,?,?)', [randomUUID(), assigneeId, `任务已分配：${task.title}`, '项目经理已审核会议纪要并分配给你，请更新任务进度。', '/my-tasks'])
         }
         for (const risk of result.risks) {
           const taskId = risk.task_index === undefined ? null : createdTaskIds[risk.task_index]
-          await connection.execute('INSERT INTO risks (id,project_id,analysis_id,task_id,title,description,level) VALUES (?,?,?,?,?,?,?)', [randomUUID(), rows[0].project_id, analysisId, taskId, risk.title, risk.description ?? null, risk.level])
+          await connection.execute('INSERT INTO risks (id,project_id,analysis_id,task_id,title,description,level) VALUES (?,?,?,?,?,?,?)', [randomUUID(), locked.project_id, analysisId, taskId, risk.title, risk.description ?? null, risk.level])
         }
       }
       await connection.commit()

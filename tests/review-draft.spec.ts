@@ -34,8 +34,8 @@ it('requires a non-blank rejection reason for single and batch reviews', async (
 it('uses edited draft task fields when approving an analysis', async () => {
   const manager = { id: 'manager-1', role: 'manager' as const, name: 'Manager', email: 'manager@example.com' }
   const connection = { beginTransaction: vi.fn(), commit: vi.fn(), rollback: vi.fn(), release: vi.fn(), execute: vi.fn(), query: vi.fn()
+    .mockResolvedValueOnce([[{ id: 'analysis-1', project_id: 'project-1', title: 'Minutes', status: 'pending', owner_id: 'manager-1', owner_is_active: 1, owner_role: 'manager', result_json: JSON.stringify({ summary: 'x', decisions: [], tasks: [], risks: [] }) }]])
     .mockResolvedValueOnce([[{ draft_json: JSON.stringify({ summary: 'x', decisions: [], tasks: [{ title: 'Edited', priority: 'high', owner_email: 'member@example.com' }], risks: [] }) }]])
-    .mockResolvedValueOnce([[{ owner_id: 'manager-1' }]])
     .mockResolvedValueOnce([[{ id: 'member-1' }]]) }
   vi.spyOn(pool, 'query')
     .mockResolvedValueOnce([[{ id: 'analysis-1', project_id: 'project-1', status: 'pending', result_json: JSON.stringify({ summary: 'x', decisions: [], tasks: [{ title: 'Original', priority: 'low' }], risks: [] }), requested_by: 'manager-1', meeting_title: 'Minutes' }]] as any)
@@ -149,8 +149,8 @@ it('rejects a risk link outside the candidate task list when saving a review dra
 it('approves a manual analysis using a human-authored saved task', async () => {
   const manager = { id: 'manager-1', role: 'manager' as const, name: 'Manager', email: 'manager@example.com' }
   const connection = { beginTransaction: vi.fn(), commit: vi.fn(), rollback: vi.fn(), release: vi.fn(), execute: vi.fn(), query: vi.fn()
-    .mockResolvedValueOnce([[{ draft_json: JSON.stringify({ summary: 'Human summary', decisions: ['Ship'], tasks: [{ title: 'Human task', priority: 'medium' }], risks: [{ title: 'Schedule', level: 'low' }] }) }]])
-    .mockResolvedValueOnce([[{ owner_id: 'manager-1' }]]) }
+    .mockResolvedValueOnce([[{ id: 'analysis-1', project_id: 'project-1', title: 'Minutes', status: 'pending', owner_id: 'manager-1', owner_is_active: 1, owner_role: 'manager', result_json: JSON.stringify({ summary: 'x', decisions: [], tasks: [], risks: [] }) }]])
+    .mockResolvedValueOnce([[{ draft_json: JSON.stringify({ summary: 'Human summary', decisions: ['Ship'], tasks: [{ title: 'Human task', priority: 'medium' }], risks: [{ title: 'Schedule', level: 'low' }] }) }]]) }
   vi.spyOn(pool, 'query')
     .mockResolvedValueOnce([[{ id: 'analysis-1', mode: 'manual', project_id: 'project-1', status: 'pending', result_json: JSON.stringify({ summary: 'Manual review required', decisions: [], tasks: [], risks: [] }), requested_by: 'manager-1', meeting_title: 'Minutes' }]] as any)
     .mockResolvedValueOnce([[{ owner_id: 'manager-1' }]] as any)
@@ -166,8 +166,8 @@ it('approves a manual analysis using a human-authored saved task', async () => {
 it('links an approved risk to the formal task selected in its review draft', async () => {
   const manager = { id: 'manager-1', role: 'manager' as const, name: 'Manager', email: 'manager@example.com' }
   const connection = { beginTransaction: vi.fn(), commit: vi.fn(), rollback: vi.fn(), release: vi.fn(), execute: vi.fn(), query: vi.fn()
-    .mockResolvedValueOnce([[{ draft_json: JSON.stringify({ summary: 'x', decisions: [], tasks: [{ title: 'First', priority: 'low' }, { title: 'Second', priority: 'high' }], risks: [{ title: 'Second risk', level: 'high', task_index: 1 }] }) }]])
-    .mockResolvedValueOnce([[{ owner_id: 'manager-1' }]]) }
+    .mockResolvedValueOnce([[{ id: 'analysis-1', project_id: 'project-1', title: 'Minutes', status: 'pending', owner_id: 'manager-1', owner_is_active: 1, owner_role: 'manager', result_json: JSON.stringify({ summary: 'x', decisions: [], tasks: [], risks: [] }) }]])
+    .mockResolvedValueOnce([[{ draft_json: JSON.stringify({ summary: 'x', decisions: [], tasks: [{ title: 'First', priority: 'low' }, { title: 'Second', priority: 'high' }], risks: [{ title: 'Second risk', level: 'high', task_index: 1 }] }) }]]) }
   vi.spyOn(pool, 'query')
     .mockResolvedValueOnce([[{ id: 'analysis-1', project_id: 'project-1', status: 'pending', result_json: JSON.stringify({ summary: 'x', decisions: [], tasks: [], risks: [] }), requested_by: 'manager-1', meeting_title: 'Minutes' }]] as any)
     .mockResolvedValueOnce([[{ owner_id: 'manager-1' }]] as any)
@@ -181,6 +181,72 @@ it('links an approved risk to the formal task selected in its review draft', asy
   expect(taskInserts).toHaveLength(2)
   expect(riskInsert?.[0]).toContain('task_id')
   expect(riskInsert?.[1]).toContain(taskInserts[1][1][0])
+})
+
+it('rechecks the analysis status after locking the row inside the approval transaction', async () => {
+  const manager = { id: 'manager-1', role: 'manager' as const, name: 'Manager', email: 'manager@example.com' }
+  const connection = {
+    beginTransaction: vi.fn(), commit: vi.fn(), rollback: vi.fn(), release: vi.fn(), execute: vi.fn(),
+    query: vi.fn().mockImplementation(async (sql: string) => String(sql).includes('FOR UPDATE')
+      ? [[{ id: 'analysis-1', project_id: 'project-1', title: 'Minutes', status: 'approved', owner_id: 'manager-1', owner_is_active: 1, owner_role: 'manager' }]]
+      : [[]]),
+  }
+  vi.spyOn(pool, 'query')
+    .mockResolvedValueOnce([[{ id: 'analysis-1', project_id: 'project-1', status: 'pending', result_json: JSON.stringify({ summary: 'x', decisions: [], tasks: [], risks: [] }) }]] as any)
+    .mockResolvedValueOnce([[{ owner_id: 'manager-1' }]] as any)
+  vi.spyOn(pool, 'getConnection').mockResolvedValue(connection as any)
+  vi.spyOn(pool, 'execute').mockResolvedValue([] as any)
+
+  await expect(new AppService({} as any).reviewAnalysis(manager, 'analysis-1', true))
+    .rejects.toThrow('Analysis has already been reviewed')
+  expect(connection.execute).not.toHaveBeenCalledWith(expect.stringContaining('INSERT INTO tasks'), expect.anything())
+})
+
+it('falls back to the active project owner when the draft email matches an inactive account', async () => {
+  const manager = { id: 'manager-1', role: 'manager' as const, name: 'Manager', email: 'manager@example.com' }
+  const locked = { id: 'analysis-1', project_id: 'project-1', title: 'Minutes', status: 'pending', owner_id: 'manager-1', owner_is_active: 1, owner_role: 'manager' }
+  const connection = {
+    beginTransaction: vi.fn(), commit: vi.fn(), rollback: vi.fn(), release: vi.fn(), execute: vi.fn(),
+    query: vi.fn().mockImplementation(async (sql: string) => {
+      if (String(sql).includes('draft_json')) return [[{ draft_json: JSON.stringify({ summary: 'x', decisions: [], tasks: [{ title: 'Prepare release', priority: 'high', owner_email: 'inactive@example.com' }], risks: [] }) }]]
+      if (String(sql).includes('FOR UPDATE')) return [[locked]]
+      if (String(sql).includes('u.is_active=TRUE') && String(sql).includes('u.role IN')) return [[]]
+      return [[]]
+    }),
+  }
+  vi.spyOn(pool, 'query')
+    .mockResolvedValueOnce([[{ id: 'analysis-1', project_id: 'project-1', status: 'pending', result_json: JSON.stringify({ summary: 'x', decisions: [], tasks: [], risks: [] }) }]] as any)
+    .mockResolvedValueOnce([[{ owner_id: 'manager-1' }]] as any)
+  vi.spyOn(pool, 'getConnection').mockResolvedValue(connection as any)
+  vi.spyOn(pool, 'execute').mockResolvedValue([] as any)
+
+  await new AppService({} as any).reviewAnalysis(manager, 'analysis-1', true)
+
+  expect(connection.execute).toHaveBeenCalledWith(
+    expect.stringContaining('INSERT INTO notifications'),
+    expect.arrayContaining(['manager-1', '任务已分配：Prepare release', '/my-tasks']),
+  )
+})
+
+it('rolls back approval when the project owner is inactive', async () => {
+  const manager = { id: 'manager-1', role: 'manager' as const, name: 'Manager', email: 'manager@example.com' }
+  const locked = { id: 'analysis-1', project_id: 'project-1', title: 'Minutes', status: 'pending', owner_id: 'manager-1', owner_is_active: 0, owner_role: 'manager' }
+  const connection = {
+    beginTransaction: vi.fn(), commit: vi.fn(), rollback: vi.fn(), release: vi.fn(), execute: vi.fn(),
+    query: vi.fn().mockImplementation(async (sql: string) => String(sql).includes('draft_json')
+      ? [[{ draft_json: JSON.stringify({ summary: 'x', decisions: [], tasks: [{ title: 'Prepare release', priority: 'high' }], risks: [] }) }]]
+      : [[locked]]),
+  }
+  vi.spyOn(pool, 'query')
+    .mockResolvedValueOnce([[{ id: 'analysis-1', project_id: 'project-1', status: 'pending', result_json: JSON.stringify({ summary: 'x', decisions: [], tasks: [], risks: [] }) }]] as any)
+    .mockResolvedValueOnce([[{ owner_id: 'manager-1' }]] as any)
+  vi.spyOn(pool, 'getConnection').mockResolvedValue(connection as any)
+  vi.spyOn(pool, 'execute').mockResolvedValue([] as any)
+
+  await expect(new AppService({} as any).reviewAnalysis(manager, 'analysis-1', true))
+    .rejects.toThrow('Project owner is not an active task assignee')
+  expect(connection.rollback).toHaveBeenCalled()
+  expect(connection.commit).not.toHaveBeenCalled()
 })
 
 it('sends review detail and draft payloads through the client service', async () => {
