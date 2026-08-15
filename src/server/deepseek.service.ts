@@ -9,7 +9,7 @@ export type CandidateTask = {
   priority: 'low' | 'medium' | 'high' | 'urgent'
 }
 
-export type CandidateRisk = { title: string; description?: string; level: 'low' | 'medium' | 'high' }
+export type CandidateRisk = { title: string; description?: string; level: 'low' | 'medium' | 'high'; task_index?: number }
 export type MeetingAnalysis = { summary: string; decisions: string[]; tasks: CandidateTask[]; risks: CandidateRisk[] }
 
 function stringValue(value: unknown, field: string): string {
@@ -29,6 +29,7 @@ export function normalizeAnalysis(input: any): MeetingAnalysis {
     title: stringValue(risk?.title, 'risk title'),
     description: typeof risk?.description === 'string' ? risk.description.trim() : undefined,
     level: ['low', 'medium', 'high'].includes(risk?.level) ? risk.level : 'medium',
+    task_index: risk?.task_index === undefined ? undefined : typeof risk.task_index === 'number' ? risk.task_index : Number.NaN,
   })) : []
   return {
     summary: stringValue(input?.summary, 'summary'),
@@ -82,7 +83,7 @@ export class DeepSeekService {
     const apiKey = process.env.DEEPSEEK_API_KEY
     if (!apiKey) throw new ServiceUnavailableException('DeepSeek API key is not configured')
     const baseUrl = (process.env.DEEPSEEK_BASE_URL ?? 'https://api.deepseek.com').replace(/\/$/, '')
-    const model = process.env.DEEPSEEK_MODEL ?? 'deepseek-chat'
+    const model = process.env.DEEPSEEK_MODEL ?? 'deepseek-v4-pro'
     const body: Record<string, unknown> = { model, temperature: 0.1, messages }
     if (jsonResponse) body.response_format = { type: 'json_object' }
     const response = await fetch(`${baseUrl}/chat/completions`, {

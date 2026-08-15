@@ -35,3 +35,11 @@ it('excludes soft-deleted projects from normal project listings', async () => {
   await new AppService({} as any).projects(manager)
   expect(query).toHaveBeenCalledWith(expect.stringContaining('p.deleted_at IS NULL'), ['manager-1'])
 })
+
+it('scopes member project progress to tasks assigned to that member', async () => {
+  const query = vi.spyOn(pool, 'query').mockResolvedValueOnce([[]] as any)
+
+  await new AppService({} as any).projects({ id: 'member-1', role: 'member', name: 'Member', email: 'member@example.com' })
+
+  expect(query).toHaveBeenCalledWith(expect.stringContaining('tc.assignee_id=pm.user_id'), ['member-1'])
+})

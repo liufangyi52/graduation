@@ -18,6 +18,13 @@ it('provides text or file minute intake and a version history action', () => {
   expect(appSource).toContain('版本记录')
 })
 
+it('keeps the meeting file chooser full width with vertically centered controls', () => {
+  expect(styleSource).toMatch(/\.meeting-field\s*>\s*input\[type='file'\]\s*\{[^}]*height:\s*44px/)
+  expect(styleSource).toMatch(/\.meeting-field\s*>\s*input\[type='file'\]\s*\{[^}]*padding:\s*5px\s+10px/)
+  expect(styleSource).toMatch(/\.meeting-field\s*>\s*input\[type='file'\]::file-selector-button\s*\{[^}]*height:\s*28px/)
+  expect(styleSource).toMatch(/\.meeting-field\s*>\s*input\[type='file'\]::file-selector-button\s*\{[^}]*margin:\s*0\s+8px\s+0\s+0/)
+})
+
 it('provides a manager-only project member management action', () => {
   expect(appSource).toContain('项目成员')
   expect(appSource).toContain('showProjectMembers')

@@ -1,6 +1,7 @@
 import * as XLSX from 'xlsx'
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
+import { formatBeijingMinute } from './date'
 
 export type ExportKind = 'meetings' | 'tasks' | 'summary'
 export type ExportFormat = 'xlsx' | 'pdf'
@@ -11,8 +12,8 @@ export interface ExportPayload { project: { name: string; [key: string]: unknown
 const labels: Record<ExportKind, string> = { meetings: '会议纪要', tasks: '任务清单', summary: '项目统计' }
 const text = (value: unknown) => String(value ?? '')
 export function exportFilename(projectName: string, kind: ExportKind, format: ExportFormat, date: string) { return `${projectName.replace(/[\\/:*?"<>|]/g, '_')}-${labels[kind]}-${date}.${format}` }
-export function taskRows(tasks: ExportTask[]) { return tasks.map((task) => ({ 项目: task.projectName ?? '', 任务标题: task.title, 描述: task.description ?? '', 负责人: task.assigneeName ?? '', 优先级: task.priority ?? '', 状态: task.status ?? '', 进度: `${task.progress ?? 0}%`, 创建时间: task.createdAt ?? '', 截止日期: task.dueDate ?? '未设置' })) }
-export function meetingRows(meetings: ExportMeeting[]) { return meetings.map((meeting) => ({ 会议标题: meeting.title, 创建时间: meeting.createdAt ?? '', 审核状态: meeting.latestAnalysisStatus ?? '未分析', 摘要: meeting.summary ?? '', 决议: (meeting.decisions ?? []).join('；'), 版本数: meeting.versionCount ?? 0 })) }
+export function taskRows(tasks: ExportTask[]) { return tasks.map((task) => ({ 项目: task.projectName ?? '', 任务标题: task.title, 描述: task.description ?? '', 负责人: task.assigneeName ?? '', 优先级: task.priority ?? '', 状态: task.status ?? '', 进度: `${task.progress ?? 0}%`, 创建时间: task.createdAt ? formatBeijingMinute(task.createdAt) : '-', 截止日期: task.dueDate ? formatBeijingMinute(task.dueDate) : '-' })) }
+export function meetingRows(meetings: ExportMeeting[]) { return meetings.map((meeting) => ({ 会议标题: meeting.title, 创建时间: meeting.createdAt ? formatBeijingMinute(meeting.createdAt) : '-', 审核状态: meeting.latestAnalysisStatus ?? '未分析', 摘要: meeting.summary ?? '', 决议: (meeting.decisions ?? []).join('；'), 版本数: meeting.versionCount ?? 0 })) }
 function rows(payload: ExportPayload, kind: ExportKind): Array<Record<string, unknown>> { if (kind === 'tasks') return taskRows(payload.tasks ?? []); if (kind === 'meetings') return meetingRows(payload.meetings ?? []); return Object.entries(payload.metrics ?? {}).map(([key, value]) => ({ 指标: key, 数值: value })) }
 export async function downloadProjectExport(payload: ExportPayload, kind: ExportKind, format: ExportFormat, date = new Date().toISOString().slice(0, 10)) {
   const filename = exportFilename(payload.project.name, kind, format, date); const data = rows(payload, kind)

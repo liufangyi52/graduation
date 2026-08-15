@@ -83,3 +83,30 @@ it('retains task creation and completion timestamps when loading the workspace',
     completedAt: '2026-08-14T10:00:00.000Z',
   }))
 })
+
+it('updates only the requested task state', async () => {
+  vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({}), { status: 200 }))
+  const service = createWorkspaceService('token')
+  service.state.tasks.push(
+    { id: 'task-1', title: 'First', project: 'Alpha', owner: 'Member', due: '2026-08-15', priority: '中', rawPriority: 'medium', state: 'completed', progress: 100, createdAt: '' },
+    { id: 'task-2', title: 'Second', project: 'Alpha', owner: 'Member', due: '2026-08-16', priority: '中', rawPriority: 'medium', state: 'in-progress', progress: 50, createdAt: '' },
+  )
+
+  await service.updateTaskState('task-2', 'completed')
+
+  expect(service.state.tasks).toEqual([
+    expect.objectContaining({ id: 'task-1', state: 'completed', progress: 100 }),
+    expect.objectContaining({ id: 'task-2', state: 'completed', progress: 100 }),
+  ])
+})
+
+it('sends an administrator-created notification through the notification endpoint', async () => {
+  const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ created: 2 }), { status: 200 }))
+  const service = createWorkspaceService('token')
+
+  await expect((service as any).sendNotification({ title: 'Release', body: 'The release is ready.', audienceType: 'role', role: 'member' })).resolves.toEqual({ created: 2 })
+
+  expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/notifications'), expect.objectContaining({
+    method: 'POST', body: JSON.stringify({ title: 'Release', body: 'The release is ready.', audienceType: 'role', role: 'member' }),
+  }))
+})

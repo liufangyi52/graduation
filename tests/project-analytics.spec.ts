@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest'
-import { buildProjectAnalytics } from '../src/utils/projectAnalytics'
+import { averageDeliveryCycleDays, buildMemberDeliveryEfficiency, buildProjectAnalytics } from '../src/utils/projectAnalytics'
 
 it('builds project metrics, completion trend, risks, and gantt task groups', () => {
   const analytics = buildProjectAnalytics({
@@ -128,4 +128,35 @@ it('excludes invalid dates and does not fabricate actual burndown history', () =
   expect(analytics.ganttTasks).toHaveLength(1)
   expect(analytics.undatedTasks).toEqual(expect.arrayContaining([{ id: 'invalid', title: 'Invalid', status: 'completed' }]))
   expect(analytics.burndown.actual).toEqual([])
+})
+
+it('groups and ranks member delivery efficiency from attributable tasks', () => {
+  const members = buildMemberDeliveryEfficiency([
+    { owner: '李明', status: 'completed', progress: 30, createdAt: '2026-08-01', completedAt: '2026-08-02' },
+    { owner: '李明', status: 'in_progress', progress: 140, createdAt: '2026-08-01' },
+    { owner: '王芳', status: 'completed', progress: 100, createdAt: '2026-08-01', completedAt: '2026-08-03' },
+    { owner: '王芳', status: 'todo', progress: -20, createdAt: '2026-08-01' },
+    { owner: '  ', status: 'completed', progress: 100, createdAt: '2026-08-01', completedAt: '2026-08-02' },
+  ])
+
+  expect(members).toEqual([
+    { owner: '李明', totalTasks: 2, completedTasks: 1, averageProgress: 100, completionRate: 50 },
+    { owner: '王芳', totalTasks: 2, completedTasks: 1, averageProgress: 50, completionRate: 50 },
+  ])
+})
+
+it('averages only valid completed delivery intervals', () => {
+  const average = averageDeliveryCycleDays([
+    { owner: '李明', status: 'completed', createdAt: '2026-08-01T00:00:00Z', completedAt: '2026-08-02T00:00:00Z' },
+    { owner: '王芳', status: 'completed', createdAt: '2026-08-01T00:00:00Z', completedAt: '2026-08-03T00:00:00Z' },
+    { owner: '张伟', status: 'in_progress', createdAt: '2026-08-01T00:00:00Z', completedAt: '2026-08-10T00:00:00Z' },
+    { owner: '陈晨', status: 'completed', createdAt: 'invalid', completedAt: '2026-08-02T00:00:00Z' },
+    { owner: '赵敏', status: 'completed', createdAt: '2026-08-03T00:00:00Z', completedAt: '2026-08-02T00:00:00Z' },
+  ])
+
+  expect(average).toBe(1.5)
+  expect(averageDeliveryCycleDays([
+    { owner: '李明', status: 'todo', createdAt: '2026-08-01T00:00:00Z' },
+    { owner: '王芳', status: 'completed', createdAt: 'invalid', completedAt: 'invalid' },
+  ])).toBeNull()
 })

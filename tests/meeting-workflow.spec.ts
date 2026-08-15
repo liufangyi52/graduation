@@ -43,7 +43,30 @@ it('does not include a rejection reason in the audit event', async () => {
   expect(JSON.stringify(audit.mock.calls.at(-1)?.[1])).not.toContain('Contains private correction')
 })
 
-it('creates a task notification for the assignee when an analysis is approved', async () => {
+it('notifies the matching project member when an approved analysis creates a task', async () => {
+  const manager = { id: 'manager-1', role: 'manager' as const, name: 'Manager', email: 'manager@example.com' }
+  const connection = {
+    beginTransaction: vi.fn(), commit: vi.fn(), rollback: vi.fn(), release: vi.fn(), execute: vi.fn(),
+    query: vi.fn()
+      .mockResolvedValueOnce([[]])
+      .mockResolvedValueOnce([[{ owner_id: 'manager-1' }]])
+      .mockResolvedValueOnce([[{ id: 'member-1' }]]),
+  }
+  vi.spyOn(pool, 'query')
+    .mockResolvedValueOnce([[{ id: 'analysis-1', project_id: 'project-1', status: 'pending', result_json: JSON.stringify({ summary: 'x', decisions: [], tasks: [{ title: 'Prepare release', priority: 'high', owner_email: 'member@example.com' }], risks: [] }) }]] as any)
+    .mockResolvedValueOnce([[{ owner_id: 'manager-1' }]] as any)
+  vi.spyOn(pool, 'getConnection').mockResolvedValue(connection as any)
+  vi.spyOn(pool, 'execute').mockResolvedValue([] as any)
+
+  await new AppService({} as any).reviewAnalysis(manager, 'analysis-1', true)
+
+  expect(connection.execute).toHaveBeenCalledWith(
+    expect.stringContaining('INSERT INTO notifications'),
+    expect.arrayContaining(['member-1', '任务已分配：Prepare release', '/my-tasks']),
+  )
+})
+
+it('notifies the project owner when an approved task has no matching member', async () => {
   const manager = { id: 'manager-1', role: 'manager' as const, name: 'Manager', email: 'manager@example.com' }
   const connection = {
     beginTransaction: vi.fn(), commit: vi.fn(), rollback: vi.fn(), release: vi.fn(), execute: vi.fn(),
@@ -57,5 +80,8 @@ it('creates a task notification for the assignee when an analysis is approved', 
 
   await new AppService({} as any).reviewAnalysis(manager, 'analysis-1', true)
 
-  expect(connection.execute).toHaveBeenCalledWith(expect.stringContaining('INSERT INTO notifications'), expect.arrayContaining(['manager-1', '已分配任务：Prepare release', '/my-tasks']))
+  expect(connection.execute).toHaveBeenCalledWith(
+    expect.stringContaining('INSERT INTO notifications'),
+    expect.arrayContaining(['manager-1', '任务已分配：Prepare release', '/my-tasks']),
+  )
 })

@@ -31,11 +31,15 @@ export interface ProjectDetailTask {
   dueDate?: string | null
 }
 export interface ProjectDetail {
+  scope: 'personal' | 'project'
   project: { id: string; name: string; code: string; description?: string; status: string; startDate?: string; endDate?: string; ownerId: string; ownerName: string; progress: number }
   tasks: ProjectDetailTask[]
   meetings: Array<{ id: string; title: string; createdAt: string; versionCount: number; latestAnalysisStatus?: string | null }>
   risks: Array<{ id: string; title: string; description?: string; level: RiskLevel; status: string; createdAt: string; resolvedAt?: string | null }>
   members: ProjectMember[]
+  health: { activeTasks: number; blockedTasks: number; overdueTasks: number; openRisks: number }
+  memberProgress: Array<{ memberId: string; memberName: string; taskCount: number; completedTaskCount: number; averageProgress: number; latestFeedbackAt?: string | null }>
+  activity: Array<{ id: string; projectId: string; taskId: string; taskTitle: string; actorId: string; actorName: string; eventType: 'task_updated' | 'feedback_created'; beforeProgress: number; afterProgress: number; beforeStatus: string; afterStatus: string; feedbackContent?: string; createdAt: string }>
   counts: { tasks: number; completedTasks: number; pendingReviews: number; openRisks: number; members: number }
   permissions: { canEdit: boolean; canCreateTask: boolean; canManageMembers: boolean; canManageRisks: boolean }
 }
@@ -97,6 +101,9 @@ export function createWorkspaceService(token: string) {
       const detail = await request<any>(`/projects/${projectId}/detail`)
       return {
         ...detail,
+        health: detail.health ?? { activeTasks: 0, blockedTasks: 0, overdueTasks: 0, openRisks: 0 },
+        memberProgress: (detail.memberProgress ?? []).map((member: any) => ({ memberId: member.member_id ?? member.memberId, memberName: member.member_name ?? member.memberName ?? '', taskCount: Number(member.task_count ?? member.taskCount ?? 0), completedTaskCount: Number(member.completed_task_count ?? member.completedTaskCount ?? 0), averageProgress: Number(member.average_progress ?? member.averageProgress ?? 0), latestFeedbackAt: member.latest_feedback_at ?? member.latestFeedbackAt ?? null })),
+        activity: (detail.activity ?? []).map((event: any) => ({ id: event.id, projectId: event.project_id ?? event.projectId ?? projectId, taskId: event.task_id ?? event.taskId, taskTitle: event.task_title ?? event.taskTitle ?? '', actorId: event.actor_id ?? event.actorId, actorName: event.actor_name ?? event.actorName ?? '', eventType: event.event_type ?? event.eventType, beforeProgress: Number(event.before_progress ?? event.beforeProgress ?? 0), afterProgress: Number(event.after_progress ?? event.afterProgress ?? 0), beforeStatus: event.before_status ?? event.beforeStatus ?? 'todo', afterStatus: event.after_status ?? event.afterStatus ?? 'todo', feedbackContent: event.feedback_content ?? event.feedbackContent ?? undefined, createdAt: event.created_at ?? event.createdAt ?? '' })),
         tasks: (detail.tasks ?? []).map((task: any): ProjectDetailTask => ({
           id: task.id,
           title: task.title,
@@ -137,6 +144,9 @@ export function createWorkspaceService(token: string) {
       const project = state.projects.find((item) => item.id === id)
       if (project) project.state = '已归档'
     },
+    async remindTask(id: string) {
+      return request<{ id: string; taskId: string; recipientId: string }>(`/tasks/${id}/reminder`, { method: 'POST' })
+    },
     async updateTaskState(id: string, next: TaskState) {
       const progress = next === 'completed' ? 100 : next === 'todo' ? 0 : undefined
       await request(`/tasks/${id}`, { method: 'PATCH', body: JSON.stringify({ status: next.replace('-', '_'), progress }) })
@@ -151,7 +161,7 @@ export function createWorkspaceService(token: string) {
     async addTaskNote(id: string, content: string) { return request<TaskNote>(`/tasks/${id}/notes`, { method: 'POST', body: JSON.stringify({ content }) }) },
     async submitFeedback(taskId: string, author: string, content: string, progress: number) {
       const item = await request<any>(`/tasks/${taskId}/feedbacks`, { method: 'POST', body: JSON.stringify({ content, progress }) })
-      const feedback: MemberFeedback = { id: item.id, taskId, author, content, progress, createdAt: '刚刚' }
+      const feedback: MemberFeedback = { id: item.id, taskId, author, content, progress, createdAt: new Date().toISOString() }
       state.feedbacks.unshift(feedback)
       const task = state.tasks.find((entry) => entry.id === taskId)
       if (task) { task.progress = progress; if (progress === 100) task.state = 'completed' }
@@ -169,6 +179,9 @@ export function createWorkspaceService(token: string) {
       if (!item || item.read) return
       await request(`/notifications/${id}/read`, { method: 'PATCH' })
       item.read = true
+    },
+    async sendNotification(input: { title: string; body: string; audienceType: 'user' | 'role'; userId?: string; role?: 'manager' | 'member' | 'admin' | 'auditor' }) {
+      return request<{ created: number }>('/notifications', { method: 'POST', body: JSON.stringify(input) })
     },
   }
 }

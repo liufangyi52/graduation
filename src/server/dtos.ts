@@ -92,6 +92,7 @@ export class ReviewDraftRiskDto {
   @IsString() @MinLength(1) @MaxLength(180) title!: string
   @IsOptional() @IsString() @MaxLength(4000) description?: string
   @IsIn(['low', 'medium', 'high']) level!: 'low' | 'medium' | 'high'
+  @IsOptional() @Type(() => Number) @IsInt() @Min(0) task_index?: number
 }
 
 export class ReviewDraftDto {
@@ -165,6 +166,14 @@ export class SystemSettingsDto {
   @IsString() @MinLength(1) model!: string
   @IsString() @MinLength(1) mode!: string
   @IsBoolean() desensitize!: boolean
+}
+
+export class SendNotificationDto {
+  @IsString() @MinLength(1) @MaxLength(255) title!: string
+  @IsString() @MinLength(1) @MaxLength(4000) body!: string
+  @IsIn(['user', 'role']) audienceType!: 'user' | 'role'
+  @IsOptional() @IsUUID() userId?: string
+  @IsOptional() @IsIn(roles) role?: typeof roles[number]
 }
 
 export class ProjectDetailQueryDto {

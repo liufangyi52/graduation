@@ -17,11 +17,26 @@ it('creates a manually assigned task for an active project member', async () => 
   vi.spyOn(pool, 'execute').mockResolvedValue([] as any)
 
   await expect(new AppService({} as any).createTask(manager, { projectId: 'project-1', title: 'Prepare release', assigneeId: 'member-1', priority: 'high', status: 'todo', progress: 0 })).resolves.toMatchObject({ title: 'Prepare release', status: 'todo' })
-  expect(connection.execute).toHaveBeenCalledWith(expect.stringContaining('INSERT INTO notifications'), expect.arrayContaining(['member-1', '已分配任务：Prepare release']))
+  expect(connection.execute).not.toHaveBeenCalledWith(expect.stringContaining('INSERT INTO notifications'), expect.any(Array))
 })
 
 it('rejects a member closing a task', async () => {
   await expect(new AppService({} as any).closeTask(member, 'task-1')).rejects.toThrow('Only managers can close tasks')
+})
+
+it('lets a project manager remind the assignee without updating task state', async () => {
+  vi.spyOn(pool, 'query')
+    .mockResolvedValueOnce([[{ id: 'task-1', title: 'Prepare release', assignee_id: 'member-1', project_id: 'project-1', status: 'todo', progress: 0 }]] as any)
+    .mockResolvedValueOnce([[{ owner_id: 'manager-1' }]] as any)
+  const execute = vi.spyOn(pool, 'execute').mockResolvedValue([] as any)
+
+  await expect(new AppService({} as any).remindTask(manager, 'task-1')).resolves.toMatchObject({ taskId: 'task-1', recipientId: 'member-1' })
+
+  expect(execute).toHaveBeenCalledWith(
+    expect.stringContaining('INSERT INTO notifications'),
+    expect.arrayContaining(['member-1', '任务推进提醒：Prepare release', '/my-tasks']),
+  )
+  expect(execute.mock.calls.some(([sql]) => String(sql).startsWith('UPDATE tasks'))).toBe(false)
 })
 
 it('reads persisted completion timestamps in the visible task list', async () => {

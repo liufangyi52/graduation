@@ -12,3 +12,11 @@ it('returns task deadlines and meeting dates scoped to a manager-owned project',
   await expect(service.calendarEvents({ id: 'manager-1', role: 'manager', name: 'Manager', email: 'manager@example.com' })).resolves.toHaveLength(2)
   expect(query).toHaveBeenCalledWith(expect.stringContaining('p.owner_id=?'), ['manager-1', 'manager-1'])
 })
+
+it('returns only the signed-in member task deadlines while retaining project meetings', async () => {
+  const query = vi.spyOn(pool, 'query').mockResolvedValueOnce([[]] as any)
+
+  await new AppService({} as any).calendarEvents({ id: 'member-1', role: 'member', name: 'Member', email: 'member@example.com' })
+
+  expect(query).toHaveBeenCalledWith(expect.stringContaining('t.assignee_id=pm.user_id'), ['member-1', 'member-1'])
+})

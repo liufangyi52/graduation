@@ -25,10 +25,12 @@ it('uses role and user scoped keys for authorized project list reads', async () 
 
 it('invalidates business read caches after a task update', async () => {
   const cache = { invalidateBusinessReads: vi.fn().mockResolvedValue(undefined) }
+  const connection = { beginTransaction: vi.fn(), execute: vi.fn(), commit: vi.fn(), rollback: vi.fn(), release: vi.fn() }
   vi.spyOn(pool, 'query')
     .mockResolvedValueOnce([[{ id: 'task-1', title: 'Ship', assignee_id: 'manager-1', project_id: 'project-1', due_date: null, status: 'in_progress' }]] as any)
     .mockResolvedValueOnce([[{ owner_id: 'manager-1' }]] as any)
   vi.spyOn(pool, 'execute').mockResolvedValue([{}] as any)
+  vi.spyOn(pool, 'getConnection').mockResolvedValue(connection as any)
   const service = new AppService({} as any, cache as any)
 
   await service.updateTask(manager, 'task-1', { progress: 100 })

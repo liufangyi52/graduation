@@ -18,6 +18,13 @@ it('renders evidence and editable review draft fields', () => {
   expect(source).toContain('v-model="risk.title"')
 })
 
+it('lets managers link a review risk to a candidate task or keep it project-level', () => {
+  expect(source).toContain('v-model.number="risk.task_index"')
+  expect(source).toContain('项目级风险')
+  expect(source).toContain('关联任务：')
+  expect(source).toContain('risk.task_index === index')
+})
+
 it('validates rejection reason and confirms destructive actions', () => {
   expect(source).toContain('reason.value.trim().length')
   expect(source).toContain('confirm')

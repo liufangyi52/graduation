@@ -10,6 +10,9 @@ import { buildProjectAnalytics } from '../utils/projectAnalytics'
 import { RedisCacheService } from './redis-cache.service'
 import { AnalysisExecutionError, AnalysisRunner, type AnalysisExecutionMetadata, type AnalysisMode } from './analysis-runner'
 import { RagIndexService } from './rag-index.service'
+import { ProjectProgressEventsService } from './project-progress-events.service'
+import type { ProjectProgressEvent } from './project-progress.types'
+import { normalizeSystemAnalysisMode, normalizeSystemModel } from './ai-settings'
 
 type Role = 'manager' | 'member' | 'admin' | 'auditor'
 type SessionUser = { id: string; role: Role; name: string; email: string; authVersion?: number }
@@ -28,6 +31,7 @@ export class AppService {
     @Inject(RedisCacheService) private readonly cache: RedisCacheService = new RedisCacheService(),
     @Inject(AnalysisRunner) private readonly analysisRunner: AnalysisRunner = new AnalysisRunner(deepseek),
     @Optional() @Inject(RagIndexService) private readonly ragIndex?: RagIndexService,
+    @Optional() @Inject(ProjectProgressEventsService) private readonly progressEvents?: ProjectProgressEventsService,
   ) {}
   async register(input: { role: Role; name: string; email: string; password: string }) {
     if (!canRegisterRole(input.role)) throw new ForbiddenException('Only member accounts can self-register')
@@ -73,7 +77,7 @@ export class AppService {
       ? `SELECT p.id,p.name,p.code,p.description,p.status,p.start_date,p.end_date,u.name owner_name,COALESCE(mc.members,0) members,COALESCE(tc.progress,0) progress FROM projects p JOIN users u ON u.id=p.owner_id LEFT JOIN (SELECT project_id,COUNT(*) members FROM project_members GROUP BY project_id) mc ON mc.project_id=p.id LEFT JOIN (SELECT project_id,ROUND(AVG(progress)) progress FROM tasks GROUP BY project_id) tc ON tc.project_id=p.id WHERE p.deleted_at IS NULL ORDER BY p.created_at DESC`
       : user.role === 'manager'
         ? `SELECT p.id,p.name,p.code,p.description,p.status,p.start_date,p.end_date,u.name owner_name,COALESCE(mc.members,0) members,COALESCE(tc.progress,0) progress FROM projects p JOIN users u ON u.id=p.owner_id LEFT JOIN (SELECT project_id,COUNT(*) members FROM project_members GROUP BY project_id) mc ON mc.project_id=p.id LEFT JOIN (SELECT project_id,ROUND(AVG(progress)) progress FROM tasks GROUP BY project_id) tc ON tc.project_id=p.id WHERE p.owner_id=? AND p.deleted_at IS NULL ORDER BY p.created_at DESC`
-        : `SELECT p.id,p.name,p.code,p.description,p.status,p.start_date,p.end_date,u.name owner_name,COALESCE(mc.members,0) members,COALESCE(tc.progress,0) progress FROM project_members pm JOIN projects p ON p.id=pm.project_id JOIN users u ON u.id=p.owner_id LEFT JOIN (SELECT project_id,COUNT(*) members FROM project_members GROUP BY project_id) mc ON mc.project_id=p.id LEFT JOIN (SELECT project_id,ROUND(AVG(progress)) progress FROM tasks GROUP BY project_id) tc ON tc.project_id=p.id WHERE pm.user_id=? AND p.deleted_at IS NULL ORDER BY p.created_at DESC`
+        : `SELECT p.id,p.name,p.code,p.description,p.status,p.start_date,p.end_date,u.name owner_name,COALESCE(mc.members,0) members,COALESCE(tc.progress,0) progress FROM project_members pm JOIN projects p ON p.id=pm.project_id JOIN users u ON u.id=p.owner_id LEFT JOIN (SELECT project_id,assignee_id,ROUND(AVG(progress)) progress FROM tasks GROUP BY project_id,assignee_id) tc ON tc.project_id=p.id AND tc.assignee_id=pm.user_id LEFT JOIN (SELECT project_id,COUNT(*) members FROM project_members GROUP BY project_id) mc ON mc.project_id=p.id WHERE pm.user_id=? AND p.deleted_at IS NULL ORDER BY p.created_at DESC`
       const [rows] = await pool.query<any[]>(sql, user.role === 'manager' || user.role === 'member' ? [user.id] : [])
       return rows
     })
@@ -148,22 +152,64 @@ export class AppService {
       FROM projects p JOIN users u ON u.id=p.owner_id WHERE p.id=? AND p.deleted_at IS NULL AND ${access}`, user.role === 'admin' || user.role === 'auditor' ? [projectId] : [projectId, user.id])
     if (!projectRows[0]) throw new BadRequestException('Project does not exist')
     const project = projectRows[0]
+    const personalScope = user.role === 'member'
     const [tasks] = await pool.query<any[]>(`SELECT t.id,t.title,t.description,t.project_id,t.priority,t.status,t.progress,t.created_at,t.completed_at,t.due_date,t.assignee_id,u.name assignee_name
-      FROM tasks t JOIN users u ON u.id=t.assignee_id WHERE t.project_id=? ORDER BY t.updated_at DESC`, [projectId])
+      FROM tasks t JOIN users u ON u.id=t.assignee_id WHERE t.project_id=?${personalScope ? ' AND t.assignee_id=?' : ''} ORDER BY t.updated_at DESC`, personalScope ? [projectId, user.id] : [projectId])
     const [meetings] = await pool.query<any[]>(`SELECT m.id,m.title,m.created_at,
       (SELECT COUNT(*) FROM meeting_versions mv WHERE mv.meeting_id=m.id) version_count,
       (SELECT a.status FROM ai_analyses a WHERE a.meeting_id=m.id ORDER BY a.created_at DESC LIMIT 1) latest_analysis_status
       FROM meetings m WHERE m.project_id=? ORDER BY m.created_at DESC`, [projectId])
-    const [risks] = await pool.query<any[]>('SELECT id,title,description,level,status,created_at,resolved_at FROM risks WHERE project_id=? ORDER BY created_at DESC', [projectId])
+    const [risks] = personalScope
+      ? await pool.query<any[]>('SELECT r.id,r.title,r.description,r.level,r.status,r.created_at,r.resolved_at FROM risks r JOIN tasks rt ON rt.id=r.task_id WHERE r.project_id=? AND rt.assignee_id=? ORDER BY r.created_at DESC', [projectId, user.id])
+      : await pool.query<any[]>('SELECT id,title,description,level,status,created_at,resolved_at FROM risks WHERE project_id=? ORDER BY created_at DESC', [projectId])
     const [members] = await pool.query<any[]>('SELECT u.id,u.name,u.email,u.role,u.is_active,pm.project_role FROM project_members pm JOIN users u ON u.id=pm.user_id WHERE pm.project_id=? ORDER BY pm.project_role DESC,u.name ASC', [projectId])
+    const [memberProgress] = await pool.query<any[]>(`SELECT pm.user_id member_id,u.name member_name,
+      COUNT(t.id) task_count,
+      COALESCE(SUM(t.status IN ('completed','closed')),0) completed_task_count,
+      COALESCE(ROUND(AVG(t.progress)),0) average_progress,
+      MAX(f.created_at) latest_feedback_at
+      FROM project_members pm
+      JOIN users u ON u.id=pm.user_id
+      LEFT JOIN tasks t ON t.project_id=pm.project_id AND t.assignee_id=pm.user_id
+      LEFT JOIN task_feedbacks f ON f.author_id=pm.user_id
+        AND EXISTS (SELECT 1 FROM tasks ft WHERE ft.id=f.task_id AND ft.project_id=pm.project_id)
+      WHERE pm.project_id=?${personalScope ? ' AND pm.user_id=?' : ''}
+      GROUP BY pm.user_id,u.name
+      ORDER BY average_progress DESC,u.name ASC`, personalScope ? [projectId, user.id] : [projectId])
+    const [activity] = await pool.query<any[]>(`SELECT e.id,e.task_id,t.title task_title,e.actor_id,u.name actor_name,e.event_type,
+      e.before_progress,e.after_progress,e.before_status,e.after_status,e.feedback_content,e.created_at
+      FROM project_progress_events e
+      JOIN tasks t ON t.id=e.task_id
+      JOIN users u ON u.id=e.actor_id
+      WHERE e.project_id=?${personalScope ? ' AND t.assignee_id=?' : ''}
+      ORDER BY e.created_at DESC
+      LIMIT 20`, personalScope ? [projectId, user.id] : [projectId])
     const canEdit = user.role === 'manager' && project.owner_id === user.id
+      const scopedProgress = personalScope
+        ? (tasks.length ? Math.round(tasks.reduce((sum, task) => sum + Number(task.progress ?? 0), 0) / tasks.length) : 0)
+        : Number(project.progress ?? 0)
       return {
-      project: { id: project.id, name: project.name, code: project.code, description: project.description, status: project.status, startDate: project.start_date, endDate: project.end_date, ownerId: project.owner_id, ownerName: project.owner_name, progress: Number(project.progress ?? 0) },
+      scope: personalScope ? 'personal' : 'project',
+      project: { id: project.id, name: project.name, code: project.code, description: project.description, status: project.status, startDate: project.start_date, endDate: project.end_date, ownerId: project.owner_id, ownerName: project.owner_name, progress: scopedProgress },
       tasks: tasks.map((task) => ({ ...task, assigneeName: task.assignee_name, createdAt: task.created_at, completedAt: task.completed_at ?? null, dueDate: task.due_date })),
       meetings: meetings.map((meeting) => ({ ...meeting, createdAt: meeting.created_at, versionCount: Number(meeting.version_count ?? 0), latestAnalysisStatus: meeting.latest_analysis_status ?? null })),
       risks: risks.map((risk) => ({ ...risk, createdAt: risk.created_at, resolvedAt: risk.resolved_at })),
       members,
-      counts: { tasks: Number(project.task_count ?? tasks.length), completedTasks: Number(project.completed_task_count ?? tasks.filter((task) => task.status === 'completed').length), pendingReviews: Number(project.pending_review_count ?? 0), openRisks: Number(project.open_risk_count ?? risks.filter((risk) => risk.status === 'open').length), members: members.length },
+      health: {
+        activeTasks: tasks.filter((task) => !['completed', 'closed'].includes(task.status)).length,
+        blockedTasks: tasks.filter((task) => task.status === 'todo').length,
+        overdueTasks: tasks.filter((task) => !['completed', 'closed'].includes(task.status) && task.due_date && new Date(task.due_date).getTime() < new Date().setHours(0, 0, 0, 0)).length,
+        openRisks: personalScope ? risks.filter((risk) => risk.status === 'open').length : Number(project.open_risk_count ?? risks.filter((risk) => risk.status === 'open').length),
+      },
+      memberProgress: memberProgress.map((member) => ({ memberId: member.member_id, memberName: member.member_name, taskCount: Number(member.task_count ?? 0), completedTaskCount: Number(member.completed_task_count ?? 0), averageProgress: Number(member.average_progress ?? 0), latestFeedbackAt: member.latest_feedback_at ?? null })),
+      activity: activity.map((event) => ({ id: event.id, projectId, taskId: event.task_id, taskTitle: event.task_title, actorId: event.actor_id, actorName: event.actor_name, eventType: event.event_type, beforeProgress: Number(event.before_progress ?? 0), afterProgress: Number(event.after_progress ?? 0), beforeStatus: event.before_status ?? 'todo', afterStatus: event.after_status ?? 'todo', feedbackContent: event.feedback_content ?? undefined, createdAt: event.created_at })),
+      counts: {
+        tasks: personalScope ? tasks.length : Number(project.task_count ?? tasks.length),
+        completedTasks: personalScope ? tasks.filter((task) => ['completed', 'closed'].includes(task.status)).length : Number(project.completed_task_count ?? tasks.filter((task) => task.status === 'completed').length),
+        pendingReviews: personalScope ? 0 : Number(project.pending_review_count ?? 0),
+        openRisks: personalScope ? risks.filter((risk) => risk.status === 'open').length : Number(project.open_risk_count ?? risks.filter((risk) => risk.status === 'open').length),
+        members: members.length,
+      },
       permissions: { canEdit, canCreateTask: canEdit, canManageMembers: canEdit, canManageRisks: canEdit },
       }
     })
@@ -347,7 +393,7 @@ export class AppService {
       JOIN projects p ON p.id=t.project_id
       ${membershipJoin}
       JOIN users u ON u.id=t.assignee_id
-      WHERE t.due_date IS NOT NULL AND p.deleted_at IS NULL AND ${projectFilter}
+      WHERE t.due_date IS NOT NULL AND p.deleted_at IS NULL AND ${projectFilter}${user.role === 'member' ? ' AND t.assignee_id=pm.user_id' : ''}
       UNION ALL
       SELECT m.id,'meeting' type,m.title,p.id project_id,p.name project_name,DATE_FORMAT(m.created_at, '%Y-%m-%d') date,NULL assignee_name,NULL priority,NULL status
       FROM meetings m
@@ -359,19 +405,51 @@ export class AppService {
     return rows
   }
 
+  async remindTask(user: SessionUser, taskId: string) {
+    const [rows] = await pool.query<any[]>('SELECT id,title,assignee_id,project_id,status FROM tasks WHERE id=?', [taskId])
+    const task = rows[0]
+    if (!task) throw new BadRequestException('Task does not exist')
+    if (task.status === 'completed' || task.status === 'closed') throw new BadRequestException('Completed tasks do not need reminders')
+    await this.assertProjectManager(user, task.project_id)
+    const id = randomUUID()
+    await pool.execute('INSERT INTO notifications (id,user_id,title,body,link) VALUES (?,?,?,?,?)', [id, task.assignee_id, `任务推进提醒：${task.title}`, '项目经理提醒你尽快完成当前任务。', '/my-tasks'])
+    await this.audit(user.id, 'task.reminder_sent', 'task', taskId, { projectId: task.project_id, assigneeId: task.assignee_id })
+    await this.invalidateBusinessReads()
+    return { id, taskId, recipientId: task.assignee_id }
+  }
+
   async updateTask(user: SessionUser, id: string, input: { status?: string; progress?: number }) {
     try { assertTaskUpdateInput(input) } catch (error) { throw new BadRequestException(error instanceof Error ? error.message : 'Invalid task update') }
-    const [rows] = await pool.query<any[]>('SELECT id,title,assignee_id, project_id,due_date,status FROM tasks WHERE id=?', [id])
-    if (rows[0] && !canUpdateTask(user, rows[0].assignee_id)) throw new ForbiddenException('You cannot update this task')
-    if (!rows[0]) throw new BadRequestException('任务不存在')
-    if (user.role === 'member' && rows[0].assignee_id !== user.id) throw new ForbiddenException('只能更新本人任务')
-    if (user.role === 'manager') await this.assertProjectManager(user, rows[0].project_id)
-    try { assertTaskStatusTransition(rows[0].status, (input.status ?? rows[0].status) as any, user.role === 'manager') } catch (error) { throw new BadRequestException(error instanceof Error ? error.message : 'Invalid task transition') }
-    const progress = input.progress
-    const status = progress === 100 ? 'completed' : input.status
-    await pool.execute("UPDATE tasks SET status=COALESCE(?,status), progress=COALESCE(?,progress), completed_at=CASE WHEN ?='completed' THEN COALESCE(completed_at,CURRENT_TIMESTAMP) ELSE completed_at END WHERE id=?", [status ?? null, progress ?? null, status ?? null, id])
-    await this.ensureTaskDeadlineWarnings({ ...rows[0], status: status ?? rows[0].status })
-    await this.audit(user.id, 'task.updated', 'task', id, { projectId: rows[0].project_id, status: status ?? null, progress: progress ?? null })
+    const [visibleRows] = await pool.query<any[]>('SELECT id,title,assignee_id,project_id,due_date,status,progress FROM tasks WHERE id=?', [id])
+    const connection = await pool.getConnection()
+    let task: any
+    let event: ProjectProgressEvent | undefined
+    let status: string | undefined
+    let progress: number | undefined
+    try {
+      await connection.beginTransaction()
+      const query = typeof (connection as any).query === 'function' ? (connection as any).query.bind(connection) : pool.query.bind(pool)
+      const [rows] = visibleRows[0] ? [visibleRows] : await query('SELECT id,title,assignee_id,project_id,due_date,status,progress FROM tasks WHERE id=? FOR UPDATE', [id])
+      task = rows[0]
+      if (task && !canUpdateTask(user, task.assignee_id)) throw new ForbiddenException('You cannot update this task')
+      if (!task) throw new BadRequestException('任务不存在')
+      if (user.role === 'member' && task.assignee_id !== user.id) throw new ForbiddenException('只能更新本人任务')
+      if (user.role === 'manager') await this.assertProjectManager(user, task.project_id)
+      try { assertTaskStatusTransition(task.status, (input.status ?? task.status) as any, user.role === 'manager') } catch (error) { throw new BadRequestException(error instanceof Error ? error.message : 'Invalid task transition') }
+      progress = input.progress
+      status = progress === 100 ? 'completed' : input.status
+      const afterProgress = progress ?? Number(task.progress ?? 0)
+      const afterStatus = status ?? task.status
+      const createdAt = new Date().toISOString()
+      const eventId = randomUUID()
+      await connection.execute("UPDATE tasks SET status=COALESCE(?,status), progress=COALESCE(?,progress), completed_at=CASE WHEN ?='completed' THEN COALESCE(completed_at,CURRENT_TIMESTAMP) ELSE completed_at END WHERE id=?", [status ?? null, progress ?? null, status ?? null, id])
+      await connection.execute('INSERT INTO project_progress_events (id,project_id,task_id,actor_id,event_type,before_progress,after_progress,before_status,after_status) VALUES (?,?,?,?,?,?,?,?,?)', [eventId, task.project_id, id, user.id, 'task_updated', Number(task.progress ?? 0), afterProgress, task.status, afterStatus])
+      event = { id: eventId, projectId: task.project_id, taskId: id, taskTitle: task.title, actorId: user.id, actorName: user.name, eventType: 'task_updated', beforeProgress: Number(task.progress ?? 0), afterProgress, beforeStatus: task.status, afterStatus, createdAt }
+      await connection.commit()
+    } catch (error) { await connection.rollback(); throw error } finally { connection.release() }
+    this.progressEvents?.publish(event!)
+    await this.ensureTaskDeadlineWarnings({ ...task, status: status ?? task.status })
+    await this.audit(user.id, 'task.updated', 'task', id, { projectId: task.project_id, status: status ?? null, progress: progress ?? null })
     await this.invalidateBusinessReads()
     return { id, status, progress }
   }
@@ -380,9 +458,10 @@ export class AppService {
     try { assertFeedbackInput(input) } catch (error) { throw new BadRequestException(error instanceof Error ? error.message : 'Invalid feedback') }
     const id = randomUUID()
     const connection = await pool.getConnection()
+    let event: ProjectProgressEvent | undefined
     try {
       await connection.beginTransaction()
-      const [tasks] = await connection.query<any[]>('SELECT assignee_id, project_id FROM tasks WHERE id=? FOR UPDATE', [taskId])
+      const [tasks] = await connection.query<any[]>('SELECT id,title,assignee_id,project_id,status,progress FROM tasks WHERE id=? FOR UPDATE', [taskId])
       const task = tasks[0]
       if (!task) throw new BadRequestException('Task does not exist')
       if (!canUpdateTask(user, task.assignee_id)) throw new ForbiddenException('You cannot update this task')
@@ -392,6 +471,10 @@ export class AppService {
       }
       await connection.execute('UPDATE tasks SET status=CASE WHEN ?=100 THEN "completed" ELSE status END, progress=?, completed_at=CASE WHEN ?=100 THEN COALESCE(completed_at,CURRENT_TIMESTAMP) ELSE completed_at END WHERE id=?', [input.progress, input.progress, input.progress, taskId])
       await connection.execute('INSERT INTO task_feedbacks (id,task_id,author_id,content,progress) VALUES (?,?,?,?,?)', [id, taskId, user.id, input.content.trim(), input.progress])
+      const afterStatus = input.progress === 100 ? 'completed' : task.status
+      const eventId = randomUUID()
+      await connection.execute('INSERT INTO project_progress_events (id,project_id,task_id,actor_id,event_type,before_progress,after_progress,before_status,after_status,feedback_content) VALUES (?,?,?,?,?,?,?,?,?,?)', [eventId, task.project_id, taskId, user.id, 'feedback_created', Number(task.progress ?? 0), input.progress, task.status, afterStatus, input.content.trim()])
+      event = { id: eventId, projectId: task.project_id, taskId, taskTitle: task.title, actorId: user.id, actorName: user.name, eventType: 'feedback_created', beforeProgress: Number(task.progress ?? 0), afterProgress: input.progress, beforeStatus: task.status, afterStatus, feedbackContent: input.content.trim(), createdAt: new Date().toISOString() }
       await connection.commit()
     } catch (reason) {
       await connection.rollback()
@@ -399,6 +482,7 @@ export class AppService {
     } finally {
       connection.release()
     }
+    this.progressEvents?.publish(event!)
     await this.audit(user.id, 'task.feedback_created', 'task_feedback', id, { taskId, progress: input.progress })
     const [tasks] = await pool.query<any[]>('SELECT id,title,assignee_id,project_id,due_date,status FROM tasks WHERE id=?', [taskId])
     if (tasks[0]) await this.ensureTaskDeadlineWarnings(tasks[0])
@@ -417,11 +501,8 @@ export class AppService {
     const isNearDue = !isOverdue && due.getTime() <= now.getTime() + 3 * 24 * 60 * 60 * 1000
     if (!isOverdue && !isNearDue) return
     const riskTitle = `${isOverdue ? '任务逾期' : '任务临近截止'}：${task.title}`
-    const notificationTitle = `${isOverdue ? '任务逾期' : '任务临近截止'}：${task.title}`
     const [risks] = await pool.query<any[]>('SELECT id FROM risks WHERE project_id=? AND title=? AND status="open" LIMIT 1', [task.project_id, riskTitle])
-    if (!risks[0]) await pool.execute('INSERT INTO risks (id,project_id,title,description,level) VALUES (?,?,?,?,?)', [randomUUID(), task.project_id, riskTitle, `任务“${task.title}”的截止日期为 ${dueDate}`, isOverdue ? 'high' : 'medium'])
-    const [notifications] = await pool.query<any[]>('SELECT id FROM notifications WHERE user_id=? AND title=? AND link=? AND is_read=FALSE LIMIT 1', [task.assignee_id, notificationTitle, '/my-tasks'])
-    if (!notifications[0]) await pool.execute('INSERT INTO notifications (id,user_id,title,body,link) VALUES (?,?,?,?,?)', [randomUUID(), task.assignee_id, notificationTitle, `请处理任务“${task.title}”。`, '/my-tasks'])
+    if (!risks[0]) await pool.execute('INSERT INTO risks (id,project_id,task_id,title,description,level) VALUES (?,?,?,?,?,?)', [randomUUID(), task.project_id, task.id, riskTitle, `任务“${task.title}”的截止日期为 ${dueDate}`, isOverdue ? 'high' : 'medium'])
   }
 
   private assertAdmin(user: SessionUser) {
@@ -473,15 +554,16 @@ export class AppService {
   async getSystemSettings(user: SessionUser) {
     this.assertAdmin(user)
     const [rows] = await pool.query<any[]>('SELECT model,mode,desensitize FROM system_settings WHERE id=1')
-    const settings = rows[0] ?? { model: 'DeepSeek V3', mode: 'RAG', desensitize: true }
-    return { model: settings.model, mode: settings.mode, desensitize: Boolean(settings.desensitize) }
+    const settings = rows[0] ?? { model: 'deepseek-v4-pro', mode: 'rag', desensitize: true }
+    return { model: normalizeSystemModel(settings.model), mode: normalizeSystemAnalysisMode(settings.mode), desensitize: Boolean(settings.desensitize) }
   }
 
   async updateSystemSettings(user: SessionUser, input: { model: string; mode: string; desensitize: boolean }) {
     this.assertAdmin(user)
-    await pool.execute('UPDATE system_settings SET model=?,mode=?,desensitize=? WHERE id=1', [input.model, input.mode, input.desensitize])
-    await this.audit(user.id, 'system_settings.updated', 'system_settings', 'default', { model: input.model, mode: input.mode, desensitize: input.desensitize })
-    return input
+    const settings = { model: normalizeSystemModel(input.model), mode: normalizeSystemAnalysisMode(input.mode), desensitize: input.desensitize }
+    await pool.execute('UPDATE system_settings SET model=?,mode=?,desensitize=? WHERE id=1', [settings.model, settings.mode, settings.desensitize])
+    await this.audit(user.id, 'system_settings.updated', 'system_settings', 'default', settings)
+    return settings
   }
 
   async createRoleDemoNotifications(user: SessionUser) {
@@ -620,7 +702,6 @@ export class AppService {
     try {
       await connection.beginTransaction()
       await connection.execute('INSERT INTO tasks (id,title,description,project_id,assignee_id,priority,status,progress,due_date,completed_at) VALUES (?,?,?,?,?,?,?,?,?,?)', [id, input.title.trim(), input.description?.trim() || null, input.projectId, input.assigneeId, input.priority, status, progress, input.dueDate || null, status === 'completed' ? new Date() : null])
-      await connection.execute('INSERT INTO notifications (id,user_id,title,body,link) VALUES (?,?,?,?,?)', [randomUUID(), input.assigneeId, `已分配任务：${input.title.trim()}`, '请查看任务详情并更新进度。', '/my-tasks'])
       await connection.commit()
     } catch (error) { await connection.rollback(); throw error } finally { connection.release() }
     await this.audit(user.id, 'task.created', 'task', id, { projectId: input.projectId, title: input.title.trim(), assigneeId: input.assigneeId, priority: input.priority, status, progress })
@@ -660,7 +741,6 @@ export class AppService {
     if (input.status === 'completed' || input.progress === 100) fields.push('completed_at=COALESCE(completed_at,CURRENT_TIMESTAMP)')
     if (!fields.length) throw new BadRequestException('No task changes supplied')
     await pool.execute(`UPDATE tasks SET ${fields.join(',')} WHERE id=?`, [...values, taskId])
-    if (input.assigneeId && input.assigneeId !== task.assignee_id) await pool.execute('INSERT INTO notifications (id,user_id,title,body,link) VALUES (?,?,?,?,?)', [randomUUID(), input.assigneeId, `已分配任务：${input.title?.trim() ?? task.title}`, '请查看任务详情并更新进度。', '/my-tasks'])
     await this.audit(user.id, 'task.updated', 'task', taskId, { fields: Object.keys(input).filter((key) => input[key as keyof typeof input] !== undefined), status: input.status ?? (input.progress === 100 ? 'completed' : null), progress: input.progress ?? null })
     await this.invalidateBusinessReads()
     return { id: taskId, ...input }
@@ -860,8 +940,12 @@ export class AppService {
 
   async listAnalyses(user: SessionUser) {
     this.assertNotAuditorBusinessRead(user)
-    const managerFilter = user.role === 'admin' ? ' WHERE p.deleted_at IS NULL' : ' WHERE p.owner_id=? AND p.deleted_at IS NULL'
-    const [rows] = await pool.query<any[]>(`SELECT a.id,a.meeting_id,a.status,a.model,COALESCE(a.mode,'llm') mode,a.execution_metadata,a.duration_ms,a.model_call_count,a.result_json,a.created_at,m.title,m.project_id FROM ai_analyses a JOIN meetings m ON m.id=a.meeting_id JOIN projects p ON p.id=m.project_id${managerFilter} ORDER BY a.created_at DESC`, managerFilter ? [user.id] : [])
+    const filter = user.role === 'admin'
+      ? ' WHERE p.deleted_at IS NULL'
+      : user.role === 'member'
+        ? " JOIN project_members pm ON pm.project_id=m.project_id WHERE pm.user_id=? AND a.status='approved' AND p.deleted_at IS NULL"
+        : ' WHERE p.owner_id=? AND p.deleted_at IS NULL'
+    const [rows] = await pool.query<any[]>(`SELECT a.id,a.meeting_id,a.status,a.model,COALESCE(a.mode,'llm') mode,a.execution_metadata,a.duration_ms,a.model_call_count,a.result_json,a.created_at,m.title,m.project_id FROM ai_analyses a JOIN meetings m ON m.id=a.meeting_id JOIN projects p ON p.id=m.project_id${filter} ORDER BY a.created_at DESC`, user.role === 'admin' ? [] : [user.id])
     return rows.map((row) => ({ ...row, mode: row.mode ?? 'llm', result: row.result_json ? normalizeStoredAnalysis(row.result_json) : null }))
   }
 
@@ -879,17 +963,22 @@ export class AppService {
       WHERE meeting_id=?${user.role === 'member' ? " AND status='approved'" : ''} ORDER BY created_at DESC LIMIT 1`, [meetingId])
     const analysis = analyses[0] ? { ...analyses[0], mode: analyses[0].mode ?? 'llm', result: analyses[0].result_json ? normalizeStoredAnalysis(analyses[0].result_json) : null } : null
     let draft: ReviewDraft | null = null
-    if (analysis) {
+    if (analysis && user.role !== 'member') {
       const [draftRows] = await pool.query<any[]>('SELECT draft_json FROM ai_analysis_drafts WHERE analysis_id=?', [analysis.id])
       if (draftRows[0]) draft = normalizeStoredAnalysis(draftRows[0].draft_json)
     }
     let text = String(meeting.desensitized_content ?? '')
     if (!text && meeting.content) text = (await this.desensitizeForProject(meeting.project_id, String(meeting.content))).content
-    const evidence = analysis?.result?.tasks?.flatMap((task: any) => {
+    const evidence = user.role === 'member' ? [] : analysis?.result?.tasks?.flatMap((task: any) => {
       const index = text.indexOf(task.title)
       return index >= 0 ? [{ start: index, end: index + task.title.length, snippet: text.slice(Math.max(0, index - 80), Math.min(text.length, index + task.title.length + 80)), source: 'generated_snippet' }] : []
     }) ?? []
-    const safeAnalysis = analysis && user.role === 'member' ? { ...analysis, rejection_reason: undefined } : analysis
+    const safeAnalysis = analysis && user.role === 'member'
+      ? (() => {
+        const { tasks: _tasks, risks: _risks, ...safeResult } = analysis.result ?? {}
+        return { ...analysis, result: safeResult, rejection_reason: undefined }
+      })()
+      : analysis
     return { meeting: { id: meeting.id, projectId: meeting.project_id, title: meeting.title, createdAt: meeting.created_at, versionNumber: meeting.version_number, desensitizedContent: text }, analysis: safeAnalysis, draft, evidence }
   }
 
@@ -901,6 +990,7 @@ export class AppService {
     if (!draft || !draft.summary?.trim() || !Array.isArray(draft.decisions) || draft.decisions.some((item) => typeof item !== 'string' || !item.trim() || item.length > 4000) || !Array.isArray(draft.tasks) || draft.tasks.length > 50 || !Array.isArray(draft.risks) || draft.risks.some((risk) => !risk?.title?.trim() || !['low', 'medium', 'high'].includes(risk.level) || (risk.description?.length ?? 0) > 4000)) throw new BadRequestException('Review draft is invalid')
     let normalized: ReviewDraft
     try { normalized = normalizeStoredAnalysis(draft) } catch (error) { throw new BadRequestException(error instanceof Error ? error.message : 'Review draft is invalid') }
+    this.assertRiskTaskReferences(normalized)
     for (const task of normalized.tasks) {
       if (task.title.length > 180 || (task.description?.length ?? 0) > 4000 || (task.owner_email && !/^\S+@\S+\.\S+$/.test(task.owner_email)) || (task.due_date && !/^\d{4}-\d{2}-\d{2}$/.test(task.due_date))) throw new BadRequestException('Review draft task fields exceed limits')
     }
@@ -908,6 +998,12 @@ export class AppService {
       ON DUPLICATE KEY UPDATE draft_json=VALUES(draft_json),updated_by=VALUES(updated_by),updated_at=CURRENT_TIMESTAMP`, [analysisId, JSON.stringify(normalized), user.id])
     await this.audit(user.id, 'analysis.draft_saved', 'analysis', analysisId, { fields: ['summary', 'decisions', 'tasks', 'risks'], taskCount: normalized.tasks.length, decisionCount: normalized.decisions.length, riskCount: normalized.risks.length })
     return normalized
+  }
+
+  private assertRiskTaskReferences(draft: ReviewDraft) {
+    if (draft.risks.some((risk) => risk.task_index !== undefined && (!Number.isInteger(risk.task_index) || risk.task_index < 0 || risk.task_index >= draft.tasks.length))) {
+      throw new BadRequestException('Risk task reference is invalid')
+    }
   }
 
   async reviewAnalysis(user: SessionUser, analysisId: string, approved: boolean, reason?: string) {
@@ -922,19 +1018,24 @@ export class AppService {
       await connection.beginTransaction()
       const [draftRows] = await connection.query<any[]>('SELECT draft_json FROM ai_analysis_drafts WHERE analysis_id=? FOR UPDATE', [analysisId])
       const result = draftRows[0]?.draft_json ? normalizeStoredAnalysis(draftRows[0].draft_json) : normalizeStoredAnalysis(rows[0].result_json)
+      this.assertRiskTaskReferences(result)
       await connection.execute('UPDATE ai_analyses SET status=?,reviewed_by=?,reviewed_at=CURRENT_TIMESTAMP,rejection_reason=? WHERE id=?', [approved ? 'approved' : 'rejected', user.id, approved ? null : reason?.trim() ?? null, analysisId])
-      await connection.execute('INSERT INTO notifications (id,user_id,title,body,link) VALUES (?,?,?,?,?)', [randomUUID(), rows[0].requested_by, `${approved ? '分析已通过' : '分析被驳回'}：${rows[0].meeting_title}`, approved ? '分析结果已通过审核。' : '分析结果需要重新处理。', '/reviews'])
       if (approved) {
         const [projectManagers] = await connection.query<any[]>('SELECT owner_id FROM projects WHERE id=?', [rows[0].project_id])
         const fallbackAssignee = projectManagers[0]?.owner_id ?? user.id
+        const createdTaskIds: string[] = []
         for (const task of result.tasks) {
           const [assignees] = task.owner_email ? await connection.query<any[]>('SELECT u.id FROM users u JOIN project_members pm ON pm.user_id=u.id WHERE pm.project_id=? AND u.email=?', [rows[0].project_id, task.owner_email]) : [[]]
           const assigneeId = assignees[0]?.id ?? fallbackAssignee
           const taskId = randomUUID()
+          createdTaskIds.push(taskId)
           await connection.execute('INSERT INTO tasks (id,title,description,project_id,assignee_id,priority,status,progress,due_date) VALUES (?,?,?,?,?,?,?,?,?)', [taskId, task.title, task.description ?? null, rows[0].project_id, assigneeId, task.priority, 'todo', 0, task.due_date ?? null])
-          await connection.execute('INSERT INTO notifications (id,user_id,title,body,link) VALUES (?,?,?,?,?)', [randomUUID(), assigneeId, `已分配任务：${task.title}`, task.description ?? '请查看任务详情并更新进度。', '/my-tasks'])
+          await connection.execute('INSERT INTO notifications (id,user_id,title,body,link) VALUES (?,?,?,?,?)', [randomUUID(), assigneeId, `任务已分配：${task.title}`, '项目经理已审核会议纪要并分配给你，请更新任务进度。', '/my-tasks'])
         }
-        for (const risk of result.risks) await connection.execute('INSERT INTO risks (id,project_id,analysis_id,title,description,level) VALUES (?,?,?,?,?,?)', [randomUUID(), rows[0].project_id, analysisId, risk.title, risk.description ?? null, risk.level])
+        for (const risk of result.risks) {
+          const taskId = risk.task_index === undefined ? null : createdTaskIds[risk.task_index]
+          await connection.execute('INSERT INTO risks (id,project_id,analysis_id,task_id,title,description,level) VALUES (?,?,?,?,?,?,?)', [randomUUID(), rows[0].project_id, analysisId, taskId, risk.title, risk.description ?? null, risk.level])
+        }
       }
       await connection.commit()
     } catch (reason) { await connection.rollback(); throw reason } finally { connection.release() }
@@ -1035,7 +1136,7 @@ export class AppService {
     this.assertNotAuditorBusinessRead(user)
     return this.cache.getOrLoad(await this.cache.key('risks', user), async () => {
       const [rows] = user.role === 'member'
-      ? await pool.query<any[]>('SELECT r.*,u.name project_owner_name FROM risks r JOIN project_members pm ON pm.project_id=r.project_id JOIN projects p ON p.id=r.project_id JOIN users u ON u.id=p.owner_id WHERE pm.user_id=? AND p.deleted_at IS NULL ORDER BY r.created_at DESC', [user.id])
+      ? await pool.query<any[]>('SELECT r.*,u.name project_owner_name FROM risks r JOIN tasks t ON t.id=r.task_id JOIN projects p ON p.id=r.project_id JOIN users u ON u.id=p.owner_id WHERE t.assignee_id=? AND p.deleted_at IS NULL ORDER BY r.created_at DESC', [user.id])
       : user.role === 'manager'
         ? await pool.query<any[]>('SELECT r.*,u.name project_owner_name FROM risks r JOIN projects p ON p.id=r.project_id JOIN users u ON u.id=p.owner_id WHERE p.owner_id=? AND p.deleted_at IS NULL ORDER BY r.created_at DESC', [user.id])
         : await pool.query<any[]>('SELECT r.*,u.name project_owner_name FROM risks r JOIN projects p ON p.id=r.project_id JOIN users u ON u.id=p.owner_id WHERE p.deleted_at IS NULL ORDER BY r.created_at DESC')
@@ -1063,6 +1164,28 @@ export class AppService {
   async notifications(user: SessionUser) {
     const [rows] = await pool.query<any[]>('SELECT id,title,body,link,is_read,created_at FROM notifications WHERE user_id=? ORDER BY created_at DESC', [user.id])
     return rows
+  }
+
+  async sendNotification(user: SessionUser, input: { title: string; body: string; audienceType: 'user' | 'role'; userId?: string; role?: Role }) {
+    this.assertAdmin(user)
+    const title = input.title?.trim()
+    const body = input.body?.trim()
+    if (!title || !body) throw new BadRequestException('Notification title and body are required')
+
+    const [recipients] = input.audienceType === 'user'
+      ? input.userId
+        ? await pool.query<any[]>('SELECT id FROM users WHERE id=? AND is_active=TRUE', [input.userId])
+        : [[]]
+      : input.audienceType === 'role' && input.role
+        ? await pool.query<any[]>('SELECT id FROM users WHERE role=? AND is_active=TRUE ORDER BY created_at ASC', [input.role])
+        : [[]]
+    if (!recipients.length) throw new BadRequestException('No active notification recipients')
+
+    for (const recipient of recipients) {
+      await pool.execute('INSERT INTO notifications (id,user_id,title,body,link) VALUES (?,?,?,?,?)', [randomUUID(), recipient.id, title, body, '/notifications'])
+    }
+    await this.audit(user.id, 'notification.sent', 'notification', null, { audienceType: input.audienceType, userId: input.userId ?? null, role: input.role ?? null, created: recipients.length })
+    return { created: recipients.length }
   }
 
   async markNotificationRead(user: SessionUser, id: string) {

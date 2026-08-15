@@ -25,7 +25,7 @@ export interface AnalysisRecord { id: string; meetingId: string; title: string; 
 export interface ExperimentSummaryMetric { runCount: number; pendingCount: number; failedCount: number; approvedCount: number; rejectedCount: number; totalDurationMs: number; averageDurationMs: number; totalModelCalls: number }
 export type ExperimentSummary = Record<AnalysisMode, ExperimentSummaryMetric>
 export interface ReviewDraftTask { title: string; description?: string; owner_email?: string; due_date?: string; priority: 'low' | 'medium' | 'high' | 'urgent' }
-export interface ReviewDraftRisk { title: string; description?: string; level: 'low' | 'medium' | 'high' }
+export interface ReviewDraftRisk { title: string; description?: string; level: 'low' | 'medium' | 'high'; task_index?: number }
 export interface ReviewDraft { summary: string; decisions: string[]; tasks: ReviewDraftTask[]; risks: ReviewDraftRisk[] }
 export interface ReviewDetail { meeting: any; analysis: any; draft: ReviewDraft | null; evidence: Array<{ start: number; end: number; snippet: string }> }
 export interface MeetingVersionSummary { id: string; meetingId: string; versionNumber: number; sourceType: string; createdAt: string; current?: boolean }

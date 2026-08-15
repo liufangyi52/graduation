@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { createWorkspaceService, type Task, type TaskState } from '../services/workspaceService'
 import type { UserAccount } from '../services/authService'
 import { priorityLabel, taskStatusLabel } from '../utils/labels'
+import { formatBeijingMinute } from '../utils/date'
 
 const props = defineProps<{ token: string; user: UserAccount }>()
 const route = useRoute()
@@ -12,6 +13,8 @@ const service = createWorkspaceService(props.token)
 const tasks = ref<Task[]>([])
 const loading = ref(true)
 const error = ref('')
+const notice = ref('')
+const updatingTaskId = ref<string | null>(null)
 const filters = ref({ project: '', assignee: '', status: '', priority: '', risk: '', dueFrom: '', dueTo: '', search: '' })
 const states: Array<{ id: TaskState; label: string }> = [
   { id: 'todo', label: taskStatusLabel('todo').label },
@@ -42,7 +45,7 @@ const filtered = computed(() => tasks.value.filter((task) =>
   && (!filters.value.dueTo || task.due <= filters.value.dueTo),
 ))
 
-const canUpdate = computed(() => props.user.role === 'manager' || props.user.role === 'member')
+const canRemind = computed(() => props.user.role === 'manager')
 
 async function load() {
   loading.value = true
@@ -56,11 +59,19 @@ async function load() {
   }
 }
 
-async function updateStatus(task: Task) {
-  if (!canUpdate.value) return
-  const next: TaskState = task.state === 'todo' ? 'in-progress' : task.state === 'in-progress' ? 'completed' : 'todo'
-  await service.updateTaskState(task.id, next)
-  await load()
+async function sendReminder(task: Task) {
+  if (!canRemind.value || updatingTaskId.value || task.state === 'completed' || task.state === 'closed') return
+  updatingTaskId.value = task.id
+  error.value = ''
+  notice.value = ''
+  try {
+    await service.remindTask(task.id)
+    notice.value = `已向 ${task.owner} 发送推进提醒`
+  } catch (caught) {
+    error.value = caught instanceof Error ? caught.message : '任务推进提醒发送失败'
+  } finally {
+    updatingTaskId.value = null
+  }
 }
 
 watch(() => route.query, initFromQuery, { immediate: true })
@@ -71,7 +82,7 @@ onMounted(load)
 <template>
   <section class="page-section task-board-page">
     <div class="filter-bar board-filters">
-      <input v-model="filters.search" placeholder="搜索任务、项目或负责人" />
+      <input v-model="filters.search" class="search-filter" placeholder="搜索任务、项目或负责人" />
       <select v-model="filters.project">
         <option value="">全部项目</option>
         <option v-for="project in service.state.projects" :key="project.id" :value="project.id">{{ project.name }}</option>
@@ -88,15 +99,18 @@ onMounted(load)
         <option value="medium">中</option>
         <option value="low">低</option>
       </select>
-      <label><input v-model="filters.risk" type="checkbox" value="open" /> 未处理风险</label>
-      <input v-model="filters.dueFrom" type="date" />
-      <input v-model="filters.dueTo" type="date" />
+      <label class="risk-filter"><input v-model="filters.risk" type="checkbox" value="open" /> 未处理风险</label>
+      <div class="date-filter">
+        <input v-model="filters.dueFrom" type="date" aria-label="截止日期起始" />
+        <input v-model="filters.dueTo" type="date" aria-label="截止日期结束" />
+      </div>
     </div>
 
     <div v-if="loading" class="panel empty-cell">正在加载任务...</div>
     <div v-else-if="error" class="panel empty-cell">{{ error }} <button class="small-button" @click="load">重试</button></div>
     <article v-else class="panel table-panel">
       <div class="panel-heading"><h3>任务列表（{{ filtered.length }}）</h3></div>
+      <p v-if="notice" class="success-text">{{ notice }}</p>
       <div class="table-wrap">
         <table>
           <thead><tr><th>任务</th><th>项目</th><th>负责人</th><th>优先级</th><th>截止日期</th><th>状态</th><th></th></tr></thead>
@@ -106,9 +120,9 @@ onMounted(load)
               <td>{{ task.project }}</td>
               <td>{{ task.owner }}</td>
               <td><span class="tag" :class="priorityLabel(task.rawPriority || task.priority).tone">{{ priorityLabel(task.rawPriority || task.priority).label }}</span></td>
-              <td>{{ task.due }}</td>
+              <td>{{ formatBeijingMinute(task.due) }}</td>
               <td><span class="tag" :class="taskStatusLabel(task.state).tone">{{ taskStatusLabel(task.state).label }}</span></td>
-              <td><button v-if="canUpdate" class="small-button" @click="updateStatus(task)">推进</button></td>
+              <td><button v-if="canRemind && task.state !== 'completed' && task.state !== 'closed'" class="small-button" :disabled="Boolean(updatingTaskId)" @click="sendReminder(task)">{{ updatingTaskId === task.id ? '发送中...' : '推进' }}</button></td>
             </tr>
             <tr v-if="!filtered.length"><td colspan="7" class="empty-cell">暂无符合条件的任务</td></tr>
           </tbody>

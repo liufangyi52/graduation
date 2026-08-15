@@ -59,6 +59,23 @@ export async function migrate() {
     CONSTRAINT fk_feedback_task FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE,
     CONSTRAINT fk_feedback_author FOREIGN KEY (author_id) REFERENCES users(id)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
+  await pool.query(`CREATE TABLE IF NOT EXISTS project_progress_events (
+    id CHAR(36) PRIMARY KEY,
+    project_id CHAR(36) NOT NULL,
+    task_id CHAR(36) NOT NULL,
+    actor_id CHAR(36) NOT NULL,
+    event_type ENUM('task_updated','feedback_created') NOT NULL,
+    before_progress TINYINT UNSIGNED NOT NULL,
+    after_progress TINYINT UNSIGNED NOT NULL,
+    before_status VARCHAR(30) NOT NULL,
+    after_status VARCHAR(30) NOT NULL,
+    feedback_content TEXT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_progress_events_project_created (project_id, created_at),
+    CONSTRAINT fk_progress_events_project FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+    CONSTRAINT fk_progress_events_task FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE,
+    CONSTRAINT fk_progress_events_actor FOREIGN KEY (actor_id) REFERENCES users(id)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
   await pool.query(`CREATE TABLE IF NOT EXISTS notifications (
     id CHAR(36) PRIMARY KEY,
     user_id CHAR(36) NOT NULL,
@@ -190,6 +207,7 @@ export async function migrate() {
     id CHAR(36) PRIMARY KEY,
     project_id CHAR(36) NOT NULL,
     analysis_id CHAR(36) NULL,
+    task_id CHAR(36) NULL,
     title VARCHAR(255) NOT NULL,
     description TEXT NULL,
     level ENUM('low','medium','high') NOT NULL,
@@ -199,6 +217,11 @@ export async function migrate() {
     resolved_at TIMESTAMP NULL,
     CONSTRAINT fk_risks_project FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
+  await addColumnIfMissing('risks', 'task_id', 'task_id CHAR(36) NULL')
+  await pool.query('CREATE INDEX idx_risks_task ON risks (task_id)')
+    .catch((error: { code?: string }) => { if (error.code !== 'ER_DUP_KEYNAME') throw error })
+  await pool.query('ALTER TABLE risks ADD CONSTRAINT fk_risks_task FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE SET NULL')
+    .catch((error: { code?: string }) => { if (error.code !== 'ER_FK_DUP_NAME') throw error })
   await pool.query(`CREATE TABLE IF NOT EXISTS audit_logs (
     id CHAR(36) PRIMARY KEY,
     actor_id CHAR(36) NULL,

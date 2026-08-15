@@ -1,7 +1,7 @@
 import { BadRequestException, Body, Controller, Delete, Get, Headers, Inject, Param, Patch, Post, Put, Query, UploadedFile, UseInterceptors } from '@nestjs/common'
 import { FileInterceptor } from '@nestjs/platform-express'
 import { AppService } from './app.service'
-import { AnalysisRequestDto, CreateMeetingDto, CreateProjectDto, CreateTaskDto, DesensitizationRuleDto, FeedbackDto, ImportMeetingDto, LoginDto, ManagedUserDto, ManagedUserUpdateDto, ProjectMemberDto, ProjectMemberUpdateDto, RegisterDto, ResetPasswordDto, ReviewBatchDto, ReviewDto, ReviewDraftDto, SystemSettingsDto, TagDto, TaskNoteDto, UpdateDesensitizationRuleDto, UpdateManagedTaskDto, UpdateProjectDto, UpdateTagDto, UpdateTaskDto } from './dtos'
+import { AnalysisRequestDto, CreateMeetingDto, CreateProjectDto, CreateTaskDto, DesensitizationRuleDto, FeedbackDto, ImportMeetingDto, LoginDto, ManagedUserDto, ManagedUserUpdateDto, ProjectMemberDto, ProjectMemberUpdateDto, RegisterDto, ResetPasswordDto, ReviewBatchDto, ReviewDto, ReviewDraftDto, SendNotificationDto, SystemSettingsDto, TagDto, TaskNoteDto, UpdateDesensitizationRuleDto, UpdateManagedTaskDto, UpdateProjectDto, UpdateTagDto, UpdateTaskDto } from './dtos'
 import { extractMeetingFileContent, type UploadedMeetingFile } from './document-import'
 
 @Controller('api')
@@ -46,6 +46,7 @@ export class AppController {
   @Get('dashboard/overdue-tasks') async overdueTasks(@Headers('authorization') authorization?: string) { return this.app.overdueTasks(await this.user(authorization)) }
   @Post('tasks') async createTask(@Headers('authorization') authorization: string | undefined, @Body() body: CreateTaskDto) { return this.app.createTask(await this.user(authorization), body) }
   @Get('calendar-events') async calendarEvents(@Headers('authorization') authorization?: string) { return this.app.calendarEvents(await this.user(authorization)) }
+  @Post('tasks/:id/reminder') async remindTask(@Headers('authorization') authorization: string | undefined, @Param('id') id: string) { return this.app.remindTask(await this.user(authorization), id) }
   @Patch('tasks/:id') async updateTask(@Headers('authorization') authorization: string | undefined, @Param('id') id: string, @Body() body: UpdateTaskDto) { return this.app.updateTask(await this.user(authorization), id, body) }
   @Patch('tasks/:id/manage') async updateManagedTask(@Headers('authorization') authorization: string | undefined, @Param('id') id: string, @Body() body: UpdateManagedTaskDto) { return this.app.updateManagedTask(await this.user(authorization), id, body) }
   @Post('tasks/:id/close') async closeTask(@Headers('authorization') authorization: string | undefined, @Param('id') id: string) { return this.app.closeTask(await this.user(authorization), id) }
@@ -54,6 +55,7 @@ export class AppController {
   @Post('tasks/:id/notes') async addTaskNote(@Headers('authorization') authorization: string | undefined, @Param('id') id: string, @Body() body: TaskNoteDto) { return this.app.addTaskNote(await this.user(authorization), id, body.content) }
   @Post('tasks/:id/feedbacks') async feedback(@Headers('authorization') authorization: string | undefined, @Param('id') id: string, @Body() body: FeedbackDto) { return this.app.feedback(await this.user(authorization), id, body) }
   @Get('notifications') async notifications(@Headers('authorization') authorization?: string) { return this.app.notifications(await this.user(authorization)) }
+  @Post('notifications') async sendNotification(@Headers('authorization') authorization: string | undefined, @Body() body: SendNotificationDto) { return this.app.sendNotification(await this.user(authorization), body) }
   @Patch('notifications/:id/read') async markNotificationRead(@Headers('authorization') authorization: string | undefined, @Param('id') id: string) { return this.app.markNotificationRead(await this.user(authorization), id) }
   @Post('notifications/demo') async createRoleDemoNotifications(@Headers('authorization') authorization?: string) { return this.app.createRoleDemoNotifications(await this.user(authorization)) }
   @Patch('projects/:id/archive') async archiveProject(@Headers('authorization') authorization: string | undefined, @Param('id') id: string) { return this.app.archiveProject(await this.user(authorization), id) }

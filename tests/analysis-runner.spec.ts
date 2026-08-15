@@ -7,6 +7,8 @@ import type { VectorPoint, VectorSearchResult, VectorStore } from '../src/server
 
 afterEach(() => vi.unstubAllGlobals())
 
+const expectedModel = process.env.DEEPSEEK_MODEL ?? 'deepseek-v4-pro'
+
 const providerResult: MeetingAnalysis = {
   summary: 'Provider summary',
   decisions: ['Approve launch'],
@@ -75,7 +77,7 @@ it('runs one structured extraction for LLM mode', async () => {
   expect(execution.result).toEqual(providerResult)
   expect(execution.metadata).toEqual({
     mode: 'llm',
-    model: 'deepseek-chat',
+    model: expectedModel,
     modelCallCount: 1,
     retrievalEnabled: false,
     retrievalStatus: 'not_applicable',
@@ -95,7 +97,7 @@ it('runs one structured extraction and reports unavailable retrieval for RAG mod
   expect(execution.result).toEqual(providerResult)
   expect(execution.metadata).toEqual({
     mode: 'rag',
-    model: 'deepseek-chat',
+    model: expectedModel,
     modelCallCount: 1,
     retrievalEnabled: false,
     retrievalStatus: 'not_configured',
@@ -174,7 +176,7 @@ it('retrieves project evidence and performs one contextual extraction for config
     result: providerResult,
     metadata: {
       mode: 'rag',
-      model: 'deepseek-chat',
+      model: expectedModel,
       modelCallCount: 1,
       retrievalEnabled: true,
       retrievalStatus: 'completed',
@@ -241,7 +243,7 @@ it('plans then extracts for agent mode', async () => {
   expect(execution.result).toEqual(providerResult)
   expect(execution.metadata).toEqual({
     mode: 'agent',
-    model: 'deepseek-chat',
+    model: expectedModel,
     modelCallCount: 2,
     retrievalEnabled: false,
     retrievalStatus: 'not_applicable',

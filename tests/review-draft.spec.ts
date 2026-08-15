@@ -68,6 +68,31 @@ it('allows admin and auditor to view desensitized review details without origina
   expect(detail.meeting).not.toHaveProperty('originalContent')
 })
 
+it('does not expose project-wide analysis tasks and risks in a member review detail', async () => {
+  const member = { id: 'member-1', role: 'member' as const, name: 'Member', email: 'member@example.com' }
+  vi.spyOn(pool, 'query')
+    .mockResolvedValueOnce([[{ id: 'meeting-1', project_id: 'project-1', title: 'Minutes', created_at: '', version_number: 1, desensitized_content: 'masked text' }]] as any)
+    .mockResolvedValueOnce([[{ project_id: 'project-1' }]] as any)
+    .mockResolvedValueOnce([[{ id: 'analysis-1', status: 'approved', model: 'test', result_json: JSON.stringify({ summary: 'x', decisions: [], tasks: [{ title: 'Other member task', priority: 'high' }], risks: [{ title: 'Other member risk', level: 'high' }] }) }]] as any)
+    .mockResolvedValueOnce([[{ draft_json: JSON.stringify({ summary: 'x', decisions: [], tasks: [{ title: 'Other member task', priority: 'high' }], risks: [{ title: 'Other member risk', level: 'high' }] }) }]] as any)
+
+  const detail = await new AppService({} as any).reviewDetail(member, 'meeting-1')
+
+  expect(detail.analysis).not.toHaveProperty('result.tasks')
+  expect(detail.analysis).not.toHaveProperty('result.risks')
+  expect(detail.draft).toBeNull()
+})
+
+it('lists approved analyses for projects joined by a member', async () => {
+  const member = { id: 'member-1', role: 'member' as const, name: 'Member', email: 'member@example.com' }
+  const query = vi.spyOn(pool, 'query').mockResolvedValueOnce([[{ id: 'analysis-1', status: 'approved', project_id: 'project-1', result_json: JSON.stringify({ summary: 'x', decisions: [], tasks: [], risks: [] }) }]] as any)
+
+  await new AppService({} as any).listAnalyses(member)
+
+  expect(query).toHaveBeenCalledWith(expect.stringContaining('JOIN project_members pm ON pm.project_id=m.project_id'), ['member-1'])
+  expect(query).toHaveBeenCalledWith(expect.stringContaining("a.status='approved'"), ['member-1'])
+})
+
 it('validates draft decisions, risks, owner email, and due date', async () => {
   const manager = { id: 'manager-1', role: 'manager' as const, name: 'Manager', email: 'manager@example.com' }
   vi.spyOn(pool, 'query')
@@ -91,6 +116,36 @@ it('saves a task-free manual draft while validating supplied structured items', 
   expect(await validate(dto)).toHaveLength(0)
 })
 
+it('preserves a risk link to its candidate task when saving a review draft', async () => {
+  const manager = { id: 'manager-1', role: 'manager' as const, name: 'Manager', email: 'manager@example.com' }
+  vi.spyOn(pool, 'query').mockImplementation(async (sql: any) => String(sql).includes('owner_id')
+    ? [[{ owner_id: 'manager-1' }]] as any
+    : [[{ project_id: 'project-1', status: 'pending' }]] as any)
+  vi.spyOn(pool, 'execute').mockResolvedValue([] as any)
+
+  await expect(new AppService({} as any).saveReviewDraft(manager, 'analysis-1', {
+    summary: 'Scoped risk',
+    decisions: [],
+    tasks: [{ title: 'Ship release', priority: 'high' }],
+    risks: [{ title: 'Release delay', level: 'high', task_index: 0 }],
+  } as any)).resolves.toMatchObject({ risks: [{ task_index: 0 }] })
+})
+
+it('rejects a risk link outside the candidate task list when saving a review draft', async () => {
+  const manager = { id: 'manager-1', role: 'manager' as const, name: 'Manager', email: 'manager@example.com' }
+  vi.spyOn(pool, 'query').mockImplementation(async (sql: any) => String(sql).includes('owner_id')
+    ? [[{ owner_id: 'manager-1' }]] as any
+    : [[{ project_id: 'project-1', status: 'pending' }]] as any)
+  vi.spyOn(pool, 'execute').mockResolvedValue([] as any)
+
+  await expect(new AppService({} as any).saveReviewDraft(manager, 'analysis-1', {
+    summary: 'Scoped risk',
+    decisions: [],
+    tasks: [{ title: 'Ship release', priority: 'high' }],
+    risks: [{ title: 'Release delay', level: 'high', task_index: 1 }],
+  } as any)).rejects.toThrow('Risk task reference is invalid')
+})
+
 it('approves a manual analysis using a human-authored saved task', async () => {
   const manager = { id: 'manager-1', role: 'manager' as const, name: 'Manager', email: 'manager@example.com' }
   const connection = { beginTransaction: vi.fn(), commit: vi.fn(), rollback: vi.fn(), release: vi.fn(), execute: vi.fn(), query: vi.fn()
@@ -106,6 +161,26 @@ it('approves a manual analysis using a human-authored saved task', async () => {
 
   expect(connection.execute).toHaveBeenCalledWith(expect.stringContaining('INSERT INTO tasks'), expect.arrayContaining(['Human task', 'medium']))
   expect(connection.execute).toHaveBeenCalledWith(expect.stringContaining('INSERT INTO risks'), expect.arrayContaining(['Schedule', 'low']))
+})
+
+it('links an approved risk to the formal task selected in its review draft', async () => {
+  const manager = { id: 'manager-1', role: 'manager' as const, name: 'Manager', email: 'manager@example.com' }
+  const connection = { beginTransaction: vi.fn(), commit: vi.fn(), rollback: vi.fn(), release: vi.fn(), execute: vi.fn(), query: vi.fn()
+    .mockResolvedValueOnce([[{ draft_json: JSON.stringify({ summary: 'x', decisions: [], tasks: [{ title: 'First', priority: 'low' }, { title: 'Second', priority: 'high' }], risks: [{ title: 'Second risk', level: 'high', task_index: 1 }] }) }]])
+    .mockResolvedValueOnce([[{ owner_id: 'manager-1' }]]) }
+  vi.spyOn(pool, 'query')
+    .mockResolvedValueOnce([[{ id: 'analysis-1', project_id: 'project-1', status: 'pending', result_json: JSON.stringify({ summary: 'x', decisions: [], tasks: [], risks: [] }), requested_by: 'manager-1', meeting_title: 'Minutes' }]] as any)
+    .mockResolvedValueOnce([[{ owner_id: 'manager-1' }]] as any)
+  vi.spyOn(pool, 'getConnection').mockResolvedValue(connection as any)
+  vi.spyOn(pool, 'execute').mockResolvedValue([] as any)
+
+  await new AppService({} as any).reviewAnalysis(manager, 'analysis-1', true)
+
+  const taskInserts = connection.execute.mock.calls.filter((call) => String(call[0]).includes('INSERT INTO tasks'))
+  const riskInsert = connection.execute.mock.calls.find((call) => String(call[0]).includes('INSERT INTO risks'))
+  expect(taskInserts).toHaveLength(2)
+  expect(riskInsert?.[0]).toContain('task_id')
+  expect(riskInsert?.[1]).toContain(taskInserts[1][1][0])
 })
 
 it('sends review detail and draft payloads through the client service', async () => {

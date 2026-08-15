@@ -74,7 +74,24 @@ export interface ProjectAnalytics {
   burndown: Burndown
 }
 
+export interface DeliveryEfficiencyTask {
+  owner?: string | null
+  status: ProjectTaskStatus
+  progress?: number
+  createdAt: string
+  completedAt?: string | null
+}
+
+export interface MemberDeliveryEfficiency {
+  owner: string
+  totalTasks: number
+  completedTasks: number
+  averageProgress: number
+  completionRate: number
+}
+
 const riskLevels: RiskLevel[] = ['low', 'medium', 'high']
+const millisecondsPerDay = 86_400_000
 
 function calendarDate(value: string): string | null {
   const date = String(value ?? '').slice(0, 10)
@@ -101,6 +118,48 @@ function calendarDates(start: string, end: string): string[] {
   const days: string[] = []
   for (let day = dayNumber(start); day <= dayNumber(end); day += 1) days.push(new Date(day * 86_400_000).toISOString().slice(0, 10))
   return days
+}
+
+export function buildMemberDeliveryEfficiency(tasks: DeliveryEfficiencyTask[]): MemberDeliveryEfficiency[] {
+  const members = new Map<string, { totalTasks: number; completedTasks: number; progressTotal: number }>()
+
+  for (const task of tasks) {
+    const owner = task.owner?.trim()
+    if (!owner) continue
+    const current = members.get(owner) ?? { totalTasks: 0, completedTasks: 0, progressTotal: 0 }
+    const completed = task.status === 'completed'
+    const numericProgress = Number(task.progress ?? 0)
+    const progress = completed ? 100 : Math.min(100, Math.max(0, Number.isFinite(numericProgress) ? numericProgress : 0))
+    current.totalTasks += 1
+    current.completedTasks += completed ? 1 : 0
+    current.progressTotal += progress
+    members.set(owner, current)
+  }
+
+  return [...members.entries()]
+    .map(([owner, member]) => ({
+      owner,
+      totalTasks: member.totalTasks,
+      completedTasks: member.completedTasks,
+      averageProgress: Math.round(member.progressTotal / member.totalTasks),
+      completionRate: Math.round((member.completedTasks / member.totalTasks) * 100),
+    }))
+    .sort((first, second) => second.completedTasks - first.completedTasks
+      || second.averageProgress - first.averageProgress
+      || first.owner.localeCompare(second.owner, 'zh-CN'))
+}
+
+export function averageDeliveryCycleDays(tasks: DeliveryEfficiencyTask[]): number | null {
+  const intervals = tasks.flatMap((task) => {
+    if (task.status !== 'completed' || !task.completedAt) return []
+    const createdAt = Date.parse(task.createdAt)
+    const completedAt = Date.parse(task.completedAt)
+    if (!Number.isFinite(createdAt) || !Number.isFinite(completedAt) || completedAt < createdAt) return []
+    return [completedAt - createdAt]
+  })
+  if (!intervals.length) return null
+  const averageMilliseconds = intervals.reduce((sum, interval) => sum + interval, 0) / intervals.length
+  return Math.round((averageMilliseconds / millisecondsPerDay) * 10) / 10
 }
 
 export function buildProjectAnalytics(input: ProjectAnalyticsInput, today: string): ProjectAnalytics {

@@ -13,12 +13,15 @@ it('creates an overdue warning only when an identical open risk does not already
     .mockResolvedValueOnce([[{ owner_id: 'manager-1' }]] as any)
     .mockResolvedValueOnce([[]] as any)
     .mockResolvedValueOnce([[]] as any)
+  const connection = { beginTransaction: vi.fn(), commit: vi.fn(), rollback: vi.fn(), release: vi.fn(), execute: vi.fn() }
+  vi.spyOn(pool, 'getConnection').mockResolvedValue(connection as any)
   const execute = vi.spyOn(pool, 'execute').mockResolvedValue([] as any)
 
   await new AppService({} as any).updateTask(manager, 'task-1', { progress: 50 })
 
   expect(execute).toHaveBeenCalledWith(expect.stringContaining('INSERT INTO risks'), expect.arrayContaining(['任务逾期：Release']))
-  expect(execute).toHaveBeenCalledWith(expect.stringContaining('INSERT INTO notifications'), expect.arrayContaining(['member-1', '任务逾期：Release', '/my-tasks']))
+  expect(execute).toHaveBeenCalledWith(expect.stringContaining('task_id'), expect.arrayContaining(['task-1']))
+  expect(execute).not.toHaveBeenCalledWith(expect.stringContaining('INSERT INTO notifications'), expect.any(Array))
 })
 
 it('includes the owning project manager when listing risks', async () => {
@@ -30,9 +33,25 @@ it('includes the owning project manager when listing risks', async () => {
   expect(query).toHaveBeenCalledWith(expect.stringContaining('JOIN users u ON u.id=p.owner_id'))
 })
 
+it('limits member risks to those linked to the member task', async () => {
+  const query = vi.spyOn(pool, 'query').mockResolvedValue([[{ id: 'member-risk', task_id: 'member-task' }]] as any)
+
+  const risks = await new AppService({} as any).risks({ id: 'member-1', role: 'member', name: 'Member', email: 'member@example.com' })
+
+  expect(risks).toEqual([{ id: 'member-risk', task_id: 'member-task' }])
+  expect(query).toHaveBeenCalledWith(expect.stringContaining('JOIN tasks t ON t.id=r.task_id'), ['member-1'])
+  expect(query).toHaveBeenCalledWith(expect.stringContaining('t.assignee_id=?'), ['member-1'])
+})
+
 it('labels the risk-list owner column as the project owner', () => {
   const source = readFileSync(new URL('../src/App.vue', import.meta.url), 'utf8')
 
   expect(source).toContain('<th>项目负责人</th>')
   expect(source).toContain("{{ risk.owner || '未设置' }}")
+})
+
+it('does not expose internal risk identifiers in the risk list', () => {
+  const source = readFileSync(new URL('../src/App.vue', import.meta.url), 'utf8')
+
+  expect(source).not.toContain('<small class="mono">{{ risk.id }}</small>')
 })

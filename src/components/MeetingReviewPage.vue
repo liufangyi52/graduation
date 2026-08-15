@@ -11,7 +11,13 @@ const detail = ref<ReviewDetail | null>(null); const loading = ref(true); const 
 const canManage = computed(() => props.user.role === 'manager')
 const draft = ref<ReviewDraft>({ summary: '', decisions: [], tasks: [], risks: [] })
 function addTask() { draft.value.tasks.push({ title: '', priority: 'medium' }) }
-function removeTask(index: number) { draft.value.tasks.splice(index, 1) }
+function removeTask(index: number) {
+  draft.value.tasks.splice(index, 1)
+  for (const risk of draft.value.risks) {
+    if (risk.task_index === index) risk.task_index = undefined
+    else if (risk.task_index !== undefined && risk.task_index > index) risk.task_index -= 1
+  }
+}
 function addDecision() { draft.value.decisions.push('') }
 function removeDecision(index: number) { draft.value.decisions.splice(index, 1) }
 function addRisk() { draft.value.risks.push({ title: '', level: 'medium' }) }
@@ -30,6 +36,16 @@ onMounted(load)
     <template v-else-if="detail">
       <div class="review-header"><div><p class="eyebrow">AI REVIEW DETAIL</p><h2>{{ detail.meeting.title }}</h2><p class="muted">分析状态：<span class="tag" :class="analysisStatusLabel(detail.analysis.status).tone">{{ analysisStatusLabel(detail.analysis.status).label }}</span></p></div><div v-if="canManage" class="page-actions"><template v-if="['failed', 'rejected'].includes(detail.analysis.status)"><label class="modal-field"><span>重新分析模式</span><select v-model="reanalysisMode" aria-label="重新分析模式"><option value="manual">人工审核</option><option value="llm">LLM</option><option value="rag">RAG</option><option value="agent">智能体</option></select></label><button class="secondary-button" @click="reanalyze">重新分析</button></template><template v-else-if="detail.analysis.status === 'pending'"><button class="primary-button" @click="submit(true)">通过</button><button class="secondary-button" @click="showReason = true">驳回</button></template></div></div>
       <p v-if="notice" class="meeting-notice muted">{{ notice }}</p>
+      <section v-if="canManage && draft.risks.length" class="draft-risk-task-links">
+        <div v-for="(risk, index) in draft.risks" :key="`risk-link-${index}`" class="draft-row">
+          <label class="modal-field"><span>风险关联任务：{{ risk.title || `风险 ${index + 1}` }}</span>
+            <select v-model.number="risk.task_index">
+              <option :value="undefined">项目级风险</option>
+              <option v-for="(task, taskIndex) in draft.tasks" :key="taskIndex" :value="taskIndex">关联任务：{{ task.title || `候选任务 ${taskIndex + 1}` }}</option>
+            </select>
+          </label>
+        </div>
+      </section>
       <div class="detail-grid"><div><span>分析模式</span><strong>{{ detail.analysis.mode }}</strong></div><div><span>模型调用</span><strong>{{ detail.analysis.modelCallCount }} 次</strong></div><div><span>执行耗时</span><strong>{{ detail.analysis.durationMs }} ms</strong></div><div><span>检索状态</span><strong>{{ detail.analysis.executionMetadata?.retrievalStatus ?? '-' }}</strong></div></div>
       <p v-if="detail.analysis.executionMetadata?.retrievalStatus === 'not_configured'" class="meeting-notice muted">检索未配置</p>
       <section v-if="detail.analysis.executionMetadata?.retrievalStatus === 'completed'" class="panel retrieval-evidence"><div class="panel-heading"><h3>检索依据</h3><small>{{ detail.analysis.executionMetadata?.retrievalDurationMs ?? 0 }} ms · {{ detail.analysis.executionMetadata?.retrievalHitCount ?? 0 }} 条命中</small></div><div v-if="detail.analysis.executionMetadata?.retrievalSources?.length" class="evidence-list"><div v-for="source in detail.analysis.executionMetadata?.retrievalSources" :key="`${source.meetingId}-${source.versionId}-${source.chunkIndex}`" class="evidence-snippet"><strong>会议 {{ source.meetingId }}</strong><small>版本 {{ source.versionId }} · 分块 {{ source.chunkIndex }} · 相似度 {{ source.score }}</small></div></div><div v-else class="empty-cell">未命中可用的项目历史片段。</div></section>

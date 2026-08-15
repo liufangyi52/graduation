@@ -37,3 +37,10 @@ it('opens notification details in the current page and preserves the full notifi
   expect(appSource).toContain('{{ selectedNotification.read ? \'已读\' : \'未读\' }}')
   expect(appSource).not.toContain('navigate(path)')
 })
+
+it('provides the notification composer only to administrators and shows notification bodies in the list', () => {
+  expect(appSource).toContain("v-if=\"props.user.role === 'admin'\"")
+  expect(appSource).toContain('发送通知')
+  expect(appSource).toContain('{{ item.body }}')
+  expect(appSource).toContain('sendNotification')
+})

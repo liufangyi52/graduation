@@ -84,6 +84,7 @@ describe('project business role separation', () => {
       .mockResolvedValueOnce([[{ assignee_id: 'member-1', project_id: 'project-1' }]] as any)
       .mockResolvedValueOnce([[{ owner_id: 'manager-1' }]] as any)
     const execute = vi.spyOn(pool, 'execute').mockResolvedValue([] as any)
+    vi.spyOn(pool, 'getConnection').mockResolvedValue({ beginTransaction: vi.fn(), execute: vi.fn(), commit: vi.fn(), rollback: vi.fn(), release: vi.fn() } as any)
     const service = new AppService({} as any)
 
     await expect(service.updateTask(manager, 'task-1', { progress: 50 })).resolves.toEqual({ id: 'task-1', status: undefined, progress: 50 })

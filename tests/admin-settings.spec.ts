@@ -23,11 +23,11 @@ describe('administrator system settings', () => {
     const service = new AppService({} as any)
 
     await expect(service.updateSystemSettings(admin, { model: 'Qwen 2.5', mode: 'RAG', desensitize: false }))
-      .resolves.toEqual({ model: 'Qwen 2.5', mode: 'RAG', desensitize: false })
+      .resolves.toEqual({ model: 'deepseek-v4-pro', mode: 'rag', desensitize: false })
 
     expect(pool.execute).toHaveBeenCalledWith(
       expect.stringContaining('UPDATE system_settings'),
-      ['Qwen 2.5', 'RAG', false],
+      ['deepseek-v4-pro', 'rag', false],
     )
     expect(pool.execute).toHaveBeenCalledWith(
       expect.stringContaining('INSERT INTO audit_logs'),
@@ -39,7 +39,7 @@ describe('administrator system settings', () => {
     vi.spyOn(pool, 'query').mockResolvedValueOnce([[{ model: 'GPT-4o', mode: 'Single model', desensitize: 1 }]] as any)
     const service = new AppService({} as any)
 
-    await expect(service.getSystemSettings(admin)).resolves.toEqual({ model: 'GPT-4o', mode: 'Single model', desensitize: true })
+    await expect(service.getSystemSettings(admin)).resolves.toEqual({ model: 'deepseek-v4-pro', mode: 'llm', desensitize: true })
   })
 
   it('creates one routed demo notification for each active role without duplicates', async () => {
