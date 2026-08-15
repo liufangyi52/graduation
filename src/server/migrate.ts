@@ -88,6 +88,9 @@ export async function migrate() {
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
   await addColumnIfMissing('users', 'is_active', 'is_active BOOLEAN NOT NULL DEFAULT TRUE')
   await addColumnIfMissing('users', 'auth_version', 'auth_version INT NOT NULL DEFAULT 0')
+  await addColumnIfMissing('notifications', 'dedupe_key', 'dedupe_key VARCHAR(255) NULL')
+  await pool.query('CREATE UNIQUE INDEX uq_notifications_dedupe_key ON notifications (dedupe_key)')
+    .catch((error: { code?: string }) => { if (error.code !== 'ER_DUP_KEYNAME') throw error })
   await pool.query(`CREATE TABLE IF NOT EXISTS meetings (
     id CHAR(36) PRIMARY KEY,
     project_id CHAR(36) NOT NULL,

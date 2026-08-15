@@ -39,3 +39,6 @@
 只会将会议版本的脱敏文本切分并索引。Qdrant payload 仅包含项目、会议、版本、分块、内容哈希和脱敏片段，绝不包含会议原文。项目经理可在实验中心选择项目后查看安全的 RAG 状态：未配置、依赖不可用、已就绪但没有可索引的脱敏会议版本，或已就绪且存在可同步版本；只有已就绪时才能执行“同步 RAG 索引”。RAG 分析检索同项目的历史版本并默认排除待分析的当前版本，审核页只展示会议、版本、分块编号和相似度，不展示检索正文。
 
 缺少 SiliconFlow 或 Qdrant 配置时，`rag` 仍按无检索基线运行并记录 `retrievalStatus=not_configured`，这不是失败。配置存在但 Embedding 或 Qdrant 调用失败时，RAG 分析会标记为失败，且不会降级伪装成已检索；成功检索会记录 `retrievalStatus=completed`、检索耗时、命中数和安全来源标识。
+## Automatic And Manual Notifications
+
+Deadline warnings are generated automatically for unfinished tasks due within three calendar days or already overdue. They create a task-linked risk and deduplicated unread notifications for the active assignee and project owner. Administrator-authored notifications remain a separate manual workflow.

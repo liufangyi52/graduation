@@ -423,7 +423,7 @@ export class AppService {
 
   async updateTask(user: SessionUser, id: string, input: { status?: string; progress?: number }) {
     try { assertTaskUpdateInput(input) } catch (error) { throw new BadRequestException(error instanceof Error ? error.message : 'Invalid task update') }
-    const [visibleRows] = await pool.query<any[]>('SELECT id,title,assignee_id,project_id,due_date,status,progress FROM tasks WHERE id=?', [id])
+    const [visibleRows] = await pool.query<any[]>('SELECT t.id,t.title,t.assignee_id,t.project_id,p.owner_id,t.due_date,t.status,t.progress FROM tasks t JOIN projects p ON p.id=t.project_id WHERE t.id=?', [id])
     const connection = await pool.getConnection()
     let task: any
     let event: ProjectProgressEvent | undefined
@@ -432,7 +432,7 @@ export class AppService {
     try {
       await connection.beginTransaction()
       const query = typeof (connection as any).query === 'function' ? (connection as any).query.bind(connection) : pool.query.bind(pool)
-      const [rows] = visibleRows[0] ? [visibleRows] : await query('SELECT id,title,assignee_id,project_id,due_date,status,progress FROM tasks WHERE id=? FOR UPDATE', [id])
+      const [rows] = visibleRows[0] ? [visibleRows] : await query('SELECT t.id,t.title,t.assignee_id,t.project_id,p.owner_id,t.due_date,t.status,t.progress FROM tasks t JOIN projects p ON p.id=t.project_id WHERE t.id=? FOR UPDATE', [id])
       task = rows[0]
       if (task && !canUpdateTask(user, task.assignee_id)) throw new ForbiddenException('You cannot update this task')
       if (!task) throw new BadRequestException('任务不存在')
@@ -466,7 +466,7 @@ export class AppService {
     let normalizedProgress = input.progress
     try {
       await connection.beginTransaction()
-      const [tasks] = await connection.query<any[]>('SELECT id,title,assignee_id,project_id,status,progress FROM tasks WHERE id=? FOR UPDATE', [taskId])
+      const [tasks] = await connection.query<any[]>('SELECT t.id,t.title,t.assignee_id,t.project_id,p.owner_id,t.status,t.progress FROM tasks t JOIN projects p ON p.id=t.project_id WHERE t.id=? FOR UPDATE', [taskId])
       const task = tasks[0]
       if (!task) throw new BadRequestException('Task does not exist')
       if (!canUpdateTask(user, task.assignee_id)) throw new ForbiddenException('You cannot update this task')
@@ -492,13 +492,54 @@ export class AppService {
     }
     this.progressEvents?.publish(event!)
     await this.audit(user.id, 'task.feedback_created', 'task_feedback', id, { taskId, progress: normalizedProgress })
-    const [tasks] = await pool.query<any[]>('SELECT id,title,assignee_id,project_id,due_date,status FROM tasks WHERE id=?', [taskId])
+    const [tasks] = await pool.query<any[]>('SELECT t.id,t.title,t.assignee_id,t.project_id,p.owner_id,t.due_date,t.status FROM tasks t JOIN projects p ON p.id=t.project_id WHERE t.id=?', [taskId])
     if (tasks[0]) await this.ensureTaskDeadlineWarnings(tasks[0])
     await this.invalidateBusinessReads()
     return { id, taskId, authorId: user.id, ...input, progress: normalizedProgress }
   }
 
-  private async ensureTaskDeadlineWarnings(task: { id: string; title: string; assignee_id: string; project_id: string; due_date?: string | Date | null; status: string }) {
+  private async ensureTaskDeadlineWarnings(task: { id: string; title: string; assignee_id: string; project_id: string; owner_id?: string; due_date?: string | Date | null; status: string }) {
+    if (!task.due_date || task.status === 'completed' || task.status === 'closed') return
+    const dueDate = task.due_date instanceof Date
+      ? `${task.due_date.getFullYear()}-${String(task.due_date.getMonth() + 1).padStart(2, '0')}-${String(task.due_date.getDate()).padStart(2, '0')}`
+      : String(task.due_date).slice(0, 10)
+    const due = new Date(`${dueDate}T00:00:00`)
+    const today = new Date()
+    today.setHours(0, 0, 0, 0)
+    const daysUntilDue = Math.floor((due.getTime() - today.getTime()) / (24 * 60 * 60 * 1000))
+    const warningType = daysUntilDue < 0 ? 'overdue' : daysUntilDue <= 3 ? 'due_soon' : null
+    if (!warningType) return
+    const riskPrefix = warningType === 'overdue' ? '\u6d60\u8bf2\u59df\u95ab\u70ac\u6e61' : '\u4efb\u52a1\u4e34\u8fd1\u622a\u6b62'
+    const riskTitle = warningType === 'overdue'
+      ? `\u6d60\u8bf2\u59df\u95ab\u70ac\u6e61\u951b\u6b4a${task.title}`
+      : `${riskPrefix}：${task.title}`
+    const connection = await pool.getConnection()
+    try {
+      await connection.beginTransaction()
+      const [risks] = await connection.query<any[]>('SELECT id FROM risks WHERE task_id=? AND title LIKE ? AND status="open" LIMIT 1', [task.id, `${riskPrefix}%`])
+      if (!risks[0]) await connection.execute('INSERT INTO risks (id,project_id,task_id,title,description,level) VALUES (?,?,?,?,?,?)', [randomUUID(), task.project_id, task.id, riskTitle, `\u4efb\u52a1\u201c${task.title}\u201d\u7684\u622a\u6b62\u65e5\u671f\u4e3a ${dueDate}`, warningType === 'overdue' ? 'high' : 'medium'])
+      let ownerId = task.owner_id
+      if (!ownerId) {
+        const [projects] = await connection.query<any[]>('SELECT owner_id FROM projects WHERE id=?', [task.project_id])
+        ownerId = projects[0]?.owner_id
+      }
+      const ids = [task.assignee_id, ownerId].filter((id): id is string => Boolean(id))
+      const [recipients] = ids.length ? await connection.query<any[]>('SELECT id FROM users WHERE is_active=TRUE AND id IN (?)', [ids]) : [[]]
+      for (const recipientId of [...new Set(recipients.map((recipient) => recipient.id))]) {
+        const link = recipientId === ownerId ? '/tasks' : '/my-tasks'
+        const dedupeKey = `deadline:${task.id}:${warningType}:${recipientId}`
+        await connection.execute('INSERT INTO notifications (id,user_id,title,body,link,dedupe_key) VALUES (?,?,?,?,?,?) ON DUPLICATE KEY UPDATE id=id', [randomUUID(), recipientId, riskTitle, `\u4efb\u52a1\u201c${task.title}\u201d\u622a\u6b62\u65e5\u671f\u4e3a ${dueDate}\uff0c\u8bf7\u53ca\u65f6\u5904\u7406\u3002`, link, dedupeKey])
+      }
+      await connection.commit()
+    } catch (error) {
+      await connection.rollback()
+      throw error
+    } finally {
+      connection.release()
+    }
+  }
+
+  private async ensureLegacyTaskDeadlineWarnings(task: { id: string; title: string; assignee_id: string; project_id: string; due_date?: string | Date | null; status: string }) {
     if (!task.due_date || task.status === 'completed' || task.status === 'closed') return
     const dueDate = task.due_date instanceof Date
       ? `${task.due_date.getFullYear()}-${String(task.due_date.getMonth() + 1).padStart(2, '0')}-${String(task.due_date.getDate()).padStart(2, '0')}`
@@ -734,6 +775,7 @@ export class AppService {
       await connection.execute('INSERT INTO tasks (id,title,description,project_id,assignee_id,priority,status,progress,due_date,completed_at) VALUES (?,?,?,?,?,?,?,?,?,?)', [id, input.title.trim(), input.description?.trim() || null, input.projectId, input.assigneeId, input.priority, status, progress, input.dueDate || null, status === 'completed' ? new Date() : null])
       await connection.commit()
     } catch (error) { await connection.rollback(); throw error } finally { connection.release() }
+    await this.ensureTaskDeadlineWarnings({ id, title: input.title.trim(), assignee_id: input.assigneeId, project_id: input.projectId, owner_id: user.id, due_date: input.dueDate, status })
     await this.audit(user.id, 'task.created', 'task', id, { projectId: input.projectId, title: input.title.trim(), assigneeId: input.assigneeId, priority: input.priority, status, progress })
     await this.invalidateBusinessReads()
     return { id, title: input.title.trim(), projectId: input.projectId, assigneeId: input.assigneeId, priority: input.priority, status, progress, dueDate: input.dueDate ?? null }
@@ -752,7 +794,7 @@ export class AppService {
   }
 
   async updateManagedTask(user: SessionUser, taskId: string, input: { title?: string; description?: string; assigneeId?: string; priority?: 'low' | 'medium' | 'high' | 'urgent'; status?: 'todo' | 'in_progress' | 'completed'; progress?: number; dueDate?: string | null }) {
-    const [rows] = await pool.query<any[]>('SELECT id,project_id,assignee_id,status,progress,title,due_date FROM tasks WHERE id=?', [taskId])
+    const [rows] = await pool.query<any[]>('SELECT t.id,t.project_id,t.assignee_id,t.status,t.progress,t.title,t.due_date,p.owner_id FROM tasks t JOIN projects p ON p.id=t.project_id WHERE t.id=?', [taskId])
     const task = rows[0]
     if (!task) throw new BadRequestException('Task does not exist')
     await this.assertProjectManager(user, task.project_id)
@@ -776,6 +818,10 @@ export class AppService {
     }
     if (!fields.length) throw new BadRequestException('No task changes supplied')
     await pool.execute(`UPDATE tasks SET ${fields.join(',')} WHERE id=?`, [...values, taskId])
+    const normalizedState = input.status !== undefined || input.progress !== undefined
+      ? normalizeTaskState({ status: task.status, progress: Number(task.progress ?? 0) }, { status: input.status as any, progress: input.progress })
+      : { status: task.status, progress: Number(task.progress ?? 0) }
+    await this.ensureTaskDeadlineWarnings({ id: taskId, title: input.title?.trim() || task.title, assignee_id: input.assigneeId ?? task.assignee_id, project_id: task.project_id, owner_id: task.owner_id, due_date: input.dueDate !== undefined ? input.dueDate : task.due_date, status: normalizedState.status })
     await this.audit(user.id, 'task.updated', 'task', taskId, { fields: Object.keys(input).filter((key) => input[key as keyof typeof input] !== undefined), status: input.status ?? (input.progress === 100 ? 'completed' : null), progress: input.progress ?? null })
     await this.invalidateBusinessReads()
     return { id: taskId, ...input, ...(input.status !== undefined || input.progress !== undefined ? normalizeTaskState({ status: task.status, progress: Number(task.progress ?? 0) }, { status: input.status as any, progress: input.progress }) : {}) }
@@ -1242,7 +1288,7 @@ export class AppService {
   }
 
   async markNotificationRead(user: SessionUser, id: string) {
-    const [result] = await pool.execute<any>('UPDATE notifications SET is_read=TRUE WHERE id=? AND user_id=?', [id, user.id])
+    const [result] = await pool.execute<any>('UPDATE notifications SET is_read=TRUE,dedupe_key=NULL WHERE id=? AND user_id=?', [id, user.id])
     if (!result.affectedRows) throw new BadRequestException('Notification does not exist')
     return { id, is_read: true }
   }
