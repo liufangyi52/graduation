@@ -42,6 +42,14 @@ describe('administrator system settings', () => {
     await expect(service.getSystemSettings(admin)).resolves.toEqual({ model: 'deepseek-v4-pro', mode: 'llm', desensitize: true })
   })
 
+  it('returns normalized runtime analysis settings to managers but not members', async () => {
+    vi.spyOn(pool, 'query').mockResolvedValueOnce([[{ model: 'GPT-4o', mode: 'RAG' }]] as any)
+    const service = new AppService({} as any)
+
+    await expect(service.getAnalysisSettings(manager)).resolves.toEqual({ model: 'deepseek-v4-pro', mode: 'rag' })
+    await expect(service.getAnalysisSettings({ id: 'member-1', role: 'member', name: 'Member', email: 'member@example.com' })).rejects.toThrow('Only managers can access analysis settings')
+  })
+
   it('creates one routed demo notification for each active role without duplicates', async () => {
     vi.spyOn(pool, 'query')
       .mockResolvedValueOnce([[

@@ -562,6 +562,20 @@ export class AppService {
     return { model: normalizeSystemModel(settings.model), mode: normalizeSystemAnalysisMode(settings.mode), desensitize: Boolean(settings.desensitize) }
   }
 
+  private async analysisRuntimeSettings(requestedMode?: AnalysisMode): Promise<{ model: string; mode: AnalysisMode }> {
+    const response = await pool.query<any[]>('SELECT model,mode FROM system_settings WHERE id=1').catch(() => undefined)
+    const rows = Array.isArray(response) && Array.isArray(response[0]) ? response[0] : []
+    return {
+      model: normalizeSystemModel(rows[0]?.model ?? process.env.DEEPSEEK_MODEL),
+      mode: requestedMode ?? normalizeSystemAnalysisMode(rows[0]?.mode),
+    }
+  }
+
+  async getAnalysisSettings(user: SessionUser) {
+    if (user.role !== 'manager') throw new ForbiddenException('Only managers can access analysis settings')
+    return this.analysisRuntimeSettings()
+  }
+
   async updateSystemSettings(user: SessionUser, input: { model: string; mode: string; desensitize: boolean }) {
     this.assertAdmin(user)
     const settings = { model: normalizeSystemModel(input.model), mode: normalizeSystemAnalysisMode(input.mode), desensitize: input.desensitize }
@@ -629,9 +643,9 @@ export class AppService {
     }
   }
 
-  private failedExecutionMetadata(mode: AnalysisMode, error: unknown) {
+  private failedExecutionMetadata(mode: AnalysisMode, model: string, error: unknown) {
     if (error instanceof AnalysisExecutionError) return this.persistedExecutionMetadata(error.metadata)
-    return { mode, model: mode === 'manual' ? null : process.env.DEEPSEEK_MODEL ?? 'deepseek-chat', modelCallCount: 0, retrievalEnabled: false, retrievalStatus: mode === 'rag' ? 'not_configured' as const : 'not_applicable' as const }
+    return { mode, model: mode === 'manual' ? null : model, modelCallCount: 0, retrievalEnabled: false, retrievalStatus: mode === 'rag' ? 'not_configured' as const : 'not_applicable' as const }
   }
 
   private async afterExecutionPersisted(actorId: string, action: string, analysisId: string, metadata: AnalysisExecutionMetadata, durationMs: number) {
@@ -928,29 +942,30 @@ export class AppService {
     return { id, ...input, versionId, status: 'created' }
   }
 
-  async analyzeMeeting(user: SessionUser, meetingId: string, mode: AnalysisMode = 'llm') {
+  async analyzeMeeting(user: SessionUser, meetingId: string, mode?: AnalysisMode) {
     const [rows] = await pool.query<any[]>('SELECT m.id,m.title,m.project_id,m.current_version_id,v.desensitized_content FROM meetings m LEFT JOIN meeting_versions v ON v.id=m.current_version_id WHERE m.id=?', [meetingId])
     if (!rows[0]) throw new BadRequestException('Meeting does not exist')
     await this.assertProjectManager(user, rows[0].project_id)
     if (typeof rows[0].desensitized_content !== 'string') throw new BadRequestException('Current meeting version does not have desensitized content')
+    const runtime = await this.analysisRuntimeSettings(mode)
     const analysisId = randomUUID()
     const startedAt = new Date()
-    await pool.execute('INSERT INTO ai_analyses (id,meeting_id,requested_by,status,model,mode,started_at,model_call_count) VALUES (?,?,?,?,?,?,?,?)', [analysisId, meetingId, user.id, 'pending', process.env.DEEPSEEK_MODEL ?? 'deepseek-chat', mode, startedAt, 0])
+    await pool.execute('INSERT INTO ai_analyses (id,meeting_id,requested_by,status,model,mode,started_at,model_call_count) VALUES (?,?,?,?,?,?,?,?)', [analysisId, meetingId, user.id, 'pending', runtime.model, runtime.mode, startedAt, 0])
     let execution: { result: MeetingAnalysis; metadata: AnalysisExecutionMetadata }
     let durationMs: number
     try {
-      execution = await this.analysisRunner.run({ mode, title: rows[0].title, projectId: rows[0].project_id, meetingId, versionId: rows[0].current_version_id, desensitizedContent: rows[0].desensitized_content })
+      execution = await this.analysisRunner.run({ mode: runtime.mode, model: runtime.model, title: rows[0].title, projectId: rows[0].project_id, meetingId, versionId: rows[0].current_version_id, desensitizedContent: rows[0].desensitized_content })
       durationMs = Date.now() - startedAt.getTime()
       await pool.execute('UPDATE ai_analyses SET result_json=?,execution_metadata=?,finished_at=CURRENT_TIMESTAMP,duration_ms=?,model_call_count=? WHERE id=?', [JSON.stringify(execution.result), JSON.stringify(this.persistedExecutionMetadata(execution.metadata)), durationMs, execution.metadata.modelCallCount, analysisId])
     } catch (reason) {
       const durationMs = Date.now() - startedAt.getTime()
-      const metadata = this.failedExecutionMetadata(mode, reason)
+      const metadata = this.failedExecutionMetadata(runtime.mode, runtime.model, reason)
       await pool.execute('UPDATE ai_analyses SET status="failed",error_message=?,execution_metadata=?,finished_at=CURRENT_TIMESTAMP,duration_ms=?,model_call_count=? WHERE id=?', ['Analysis execution failed', JSON.stringify(metadata), durationMs, metadata.modelCallCount, analysisId])
       try { await this.audit(user.id, 'meeting.analysis_failed', 'analysis', analysisId, { mode: metadata.mode, modelCallCount: metadata.modelCallCount, durationMs, retrievalStatus: metadata.retrievalStatus }) } catch {}
       throw reason
     }
     await this.afterExecutionPersisted(user.id, 'meeting.analyzed', analysisId, execution.metadata, durationMs)
-    return { id: analysisId, meetingId, status: 'pending', mode, result: execution.result }
+    return { id: analysisId, meetingId, status: 'pending', mode: runtime.mode, result: execution.result }
   }
 
   async listAnalyses(user: SessionUser) {
@@ -1080,7 +1095,7 @@ export class AppService {
     return { succeeded, failed }
   }
 
-  async reanalyzeRejectedAnalysis(user: SessionUser, analysisId: string, mode: AnalysisMode = 'llm') {
+  async reanalyzeRejectedAnalysis(user: SessionUser, analysisId: string, mode?: AnalysisMode) {
     const [rows] = await pool.query<any[]>(`SELECT a.id,a.status,a.meeting_id,m.title,m.project_id,m.current_version_id,v.desensitized_content
       FROM ai_analyses a JOIN meetings m ON m.id=a.meeting_id JOIN projects p ON p.id=m.project_id
       LEFT JOIN meeting_versions v ON v.id=m.current_version_id WHERE a.id=? AND p.deleted_at IS NULL`, [analysisId])
@@ -1089,24 +1104,25 @@ export class AppService {
     await this.assertProjectManager(user, source.project_id)
     if (!['failed', 'rejected'].includes(source.status)) throw new BadRequestException('Only failed or rejected analyses can be reanalyzed')
     if (typeof source.desensitized_content !== 'string') throw new BadRequestException('Current meeting version does not have desensitized content')
+    const runtime = await this.analysisRuntimeSettings(mode)
     const id = randomUUID()
     const startedAt = new Date()
-    await pool.execute('INSERT INTO ai_analyses (id,meeting_id,requested_by,status,model,mode,reanalysis_of_id,started_at,model_call_count) VALUES (?,?,?,?,?,?,?,?,?)', [id, source.meeting_id, user.id, 'pending', process.env.DEEPSEEK_MODEL ?? 'deepseek-chat', mode, analysisId, startedAt, 0])
+    await pool.execute('INSERT INTO ai_analyses (id,meeting_id,requested_by,status,model,mode,reanalysis_of_id,started_at,model_call_count) VALUES (?,?,?,?,?,?,?,?,?)', [id, source.meeting_id, user.id, 'pending', runtime.model, runtime.mode, analysisId, startedAt, 0])
     let execution: { result: MeetingAnalysis; metadata: AnalysisExecutionMetadata }
     let durationMs: number
     try {
-      execution = await this.analysisRunner.run({ mode, title: source.title, projectId: source.project_id, meetingId: source.meeting_id, versionId: source.current_version_id, desensitizedContent: source.desensitized_content })
+      execution = await this.analysisRunner.run({ mode: runtime.mode, model: runtime.model, title: source.title, projectId: source.project_id, meetingId: source.meeting_id, versionId: source.current_version_id, desensitizedContent: source.desensitized_content })
       durationMs = Date.now() - startedAt.getTime()
       await pool.execute('UPDATE ai_analyses SET result_json=?,execution_metadata=?,finished_at=CURRENT_TIMESTAMP,duration_ms=?,model_call_count=? WHERE id=?', [JSON.stringify(execution.result), JSON.stringify(this.persistedExecutionMetadata(execution.metadata)), durationMs, execution.metadata.modelCallCount, id])
     } catch (error) {
       const durationMs = Date.now() - startedAt.getTime()
-      const metadata = this.failedExecutionMetadata(mode, error)
+      const metadata = this.failedExecutionMetadata(runtime.mode, runtime.model, error)
       await pool.execute('UPDATE ai_analyses SET status="failed",error_message=?,execution_metadata=?,finished_at=CURRENT_TIMESTAMP,duration_ms=?,model_call_count=? WHERE id=?', ['Analysis execution failed', JSON.stringify(metadata), durationMs, metadata.modelCallCount, id])
       try { await this.audit(user.id, 'analysis.reanalysis_failed', 'analysis', id, { mode: metadata.mode, modelCallCount: metadata.modelCallCount, durationMs, retrievalStatus: metadata.retrievalStatus }) } catch {}
       throw error
     }
     await this.afterExecutionPersisted(user.id, 'analysis.reanalyzed', id, execution.metadata, durationMs)
-    return { id, meetingId: source.meeting_id, status: 'pending', mode, reanalysisOfId: analysisId, result: execution.result }
+    return { id, meetingId: source.meeting_id, status: 'pending', mode: runtime.mode, reanalysisOfId: analysisId, result: execution.result }
   }
 
   async syncProjectRagIndex(user: SessionUser, projectId: string): Promise<{ indexedChunks: number }> {

@@ -142,6 +142,9 @@ if (props.user.role === 'admin') {
   void auth.listUsers(props.token).then((items) => { managedUsers.value = items }).catch(() => {})
   void auth.getSystemSettings(props.token).then((settings) => { systemSettings.value = settings; meetingAnalysisMode.value = settings.mode as AnalysisMode }).catch(() => {})
 }
+if (props.user.role === 'manager') {
+  void meetings.analysisSettings().then((settings) => { meetingAnalysisMode.value = settings.mode }).catch(() => {})
+}
 if (props.user.role === 'admin' || props.user.role === 'auditor') void auth.listAuditLogs(props.token).then((items) => { auditLogs.value = items }).catch(() => {})
 const now = ref(new Date())
 const todayLabel = computed(() => formatBeijingDate(now.value))

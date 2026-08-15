@@ -8,6 +8,21 @@ import { AnalysisExecutionError } from '../src/server/analysis-runner'
 const manager = { id: 'manager-1', role: 'manager' as const, name: 'Manager', email: 'manager@example.com' }
 const result = { summary: 'Safe summary', decisions: [], tasks: [], risks: [] }
 
+it('uses stored runtime model and mode for analysis execution', async () => {
+  const runner = { run: vi.fn().mockResolvedValue({ result, metadata: { mode: 'rag', model: 'deepseek-v4-pro', modelCallCount: 1, retrievalEnabled: false, retrievalStatus: 'not_configured' } }) }
+  vi.spyOn(pool, 'query').mockImplementation(async (sql: string) => {
+    if (String(sql).includes('system_settings')) return [[{ model: 'deepseek-v4-pro', mode: 'rag' }]] as any
+    if (String(sql).includes('owner_id')) return [[{ owner_id: 'manager-1' }]] as any
+    return [[{ id: 'meeting-1', title: 'Standup', project_id: 'project-1', current_version_id: 'version-1', desensitized_content: '[PHONE]' }]] as any
+  })
+  const execute = vi.spyOn(pool, 'execute').mockResolvedValue([] as any)
+
+  await new AppService({} as any, { invalidateBusinessReads: vi.fn() } as any, runner as any).analyzeMeeting(manager, 'meeting-1')
+
+  expect(runner.run).toHaveBeenCalledWith(expect.objectContaining({ mode: 'rag', model: 'deepseek-v4-pro' }))
+  expect(execute).toHaveBeenCalledWith(expect.stringContaining('INSERT INTO ai_analyses'), expect.arrayContaining(['deepseek-v4-pro', 'rag']))
+})
+
 it('runs a RAG analysis from only the current desensitized content and persists safe execution data', async () => {
   const runner = { run: vi.fn().mockResolvedValue({
     result,
@@ -25,7 +40,7 @@ it('runs a RAG analysis from only the current desensitized content and persists 
 
   await expect(new AppService({} as any, { invalidateBusinessReads: vi.fn() } as any, runner as any).analyzeMeeting(manager, 'meeting-1', 'rag')).resolves.toMatchObject({ meetingId: 'meeting-1', status: 'pending', result })
 
-  expect(runner.run).toHaveBeenCalledWith({ mode: 'rag', title: 'Standup', projectId: 'project-1', meetingId: 'meeting-1', versionId: 'version-1', desensitizedContent: '[PHONE]' })
+  expect(runner.run).toHaveBeenCalledWith({ mode: 'rag', model: 'deepseek-v4-pro', title: 'Standup', projectId: 'project-1', meetingId: 'meeting-1', versionId: 'version-1', desensitizedContent: '[PHONE]' })
   const persisted = JSON.stringify(execute.mock.calls)
   expect(persisted).not.toContain('13800138000')
   expect(persisted).not.toContain('[PHONE]')

@@ -87,6 +87,16 @@ it('runs one structured extraction for LLM mode', async () => {
   expect(provider.plan).not.toHaveBeenCalled()
 })
 
+it('passes an explicit runtime model through extraction and execution metadata', async () => {
+  const provider = createProvider()
+  const runner = new AnalysisRunner(provider)
+
+  const execution = await runner.run({ mode: 'llm', model: 'deepseek-v4-pro', title: 'Standup', desensitizedContent: '[PHONE]' })
+
+  expect(provider.analyzeWithPlan).toHaveBeenCalledWith('Standup', '[PHONE]', undefined, 'deepseek-v4-pro')
+  expect(execution.metadata.model).toBe('deepseek-v4-pro')
+})
+
 it('runs one structured extraction and reports unavailable retrieval for RAG mode', async () => {
   const provider = createProvider()
   const rag = { isConfigured: vi.fn().mockReturnValue(false), retrieve: vi.fn() }
@@ -232,6 +242,22 @@ it('labels and bounds retrieved evidence separately from an agent plan', async (
   expect(userMessage).toContain('\nEvidence:\nSource 1:')
   expect(userMessage).not.toContain('\nPlan:\nRetrieved evidence:')
   expect(userMessage).not.toContain('x'.repeat(8001))
+})
+
+it('uses an explicit model in the provider request body', async () => {
+  const previousKey = process.env.DEEPSEEK_API_KEY
+  process.env.DEEPSEEK_API_KEY = 'test-key'
+  const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(providerResult) } }] }), { status: 200 }))
+  vi.stubGlobal('fetch', fetchMock)
+
+  try {
+    await new DeepSeekService().analyzeWithPlan('Standup', '[PHONE]', undefined, 'deepseek-v4-pro')
+  } finally {
+    if (previousKey === undefined) delete process.env.DEEPSEEK_API_KEY
+    else process.env.DEEPSEEK_API_KEY = previousKey
+  }
+
+  expect(JSON.parse(String((fetchMock.mock.calls[0][1] as RequestInit).body)).model).toBe('deepseek-v4-pro')
 })
 
 it('plans then extracts for agent mode', async () => {

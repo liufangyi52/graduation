@@ -22,6 +22,13 @@ it('sends the selected mode when starting or retrying an analysis', async () => 
   expect((fetchMock.mock.calls[1][1] as RequestInit).body).toBe(JSON.stringify({ mode: 'rag' }))
 })
 
+it('omits the mode field when the manager accepts the stored server default', async () => {
+  const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ id: 'analysis-1' }), { status: 200 }))
+  await createMeetingService('token').analyze('meeting-1')
+
+  expect((fetchMock.mock.calls[0][1] as RequestInit).body).toBe('{}')
+})
+
 it('maps recorded analysis execution fields with an llm default', async () => {
   vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify([{
     id: 'analysis-1', meeting_id: 'meeting-1', title: 'Standup', status: 'pending', result: {}, created_at: '2026-08-14',
@@ -46,6 +53,11 @@ it('offers all modes at submission and retry, and limits the RAG warning to reco
   expect(reviewSource).toContain('检索未配置')
   expect(reviewSource).toContain("retrievalStatus === 'not_configured'")
   expect(reviewSource).not.toContain("analysis.mode === 'rag'")
+})
+
+it('loads manager analysis defaults from the runtime settings endpoint', () => {
+  expect(appSource).toContain('meetings.analysisSettings()')
+  expect(appSource).toContain('meetingAnalysisMode.value = settings.mode')
 })
 
 it('keeps approval controls pending-only', () => {

@@ -79,6 +79,7 @@ export class AppController {
   @Patch('risks/:id/resolve') async resolveRisk(@Headers('authorization') authorization: string | undefined, @Param('id') id: string) { return this.app.resolveRisk(await this.user(authorization), id) }
   @Get('audit-logs') async auditLogs(@Headers('authorization') authorization?: string) { return this.app.auditLogs(await this.user(authorization)) }
   @Get('settings') async settings(@Headers('authorization') authorization?: string) { return this.app.getSystemSettings(await this.user(authorization)) }
+  @Get('analysis-settings') async analysisSettings(@Headers('authorization') authorization?: string) { return this.app.getAnalysisSettings(await this.user(authorization)) }
   @Patch('settings') async updateSettings(@Headers('authorization') authorization: string | undefined, @Body() body: SystemSettingsDto) { return this.app.updateSystemSettings(await this.user(authorization), body) }
   @Get('users') async users(@Headers('authorization') authorization?: string) { return this.app.listUsers(await this.user(authorization)) }
   @Post('users') async createUser(@Headers('authorization') authorization: string | undefined, @Body() body: ManagedUserDto) { return this.app.createManagedUser(await this.user(authorization), body) }

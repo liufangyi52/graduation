@@ -44,25 +44,25 @@ const MAX_RAG_CONTEXT_LENGTH = 8000
 
 @Injectable()
 export class DeepSeekService {
-  async analyze(title: string, content: string): Promise<MeetingAnalysis> {
-    return this.analyzeWithPlan(title, content)
+  async analyze(title: string, content: string, model?: string): Promise<MeetingAnalysis> {
+    return this.analyzeWithPlan(title, content, undefined, model)
   }
 
-  async analyzeWithContext(title: string, content: string, context?: string): Promise<MeetingAnalysis> {
+  async analyzeWithContext(title: string, content: string, context?: string, model?: string): Promise<MeetingAnalysis> {
     const boundedContext = context?.trim().slice(0, MAX_RAG_CONTEXT_LENGTH)
-    return this.analyzeStructured(title, content, boundedContext ? `\nEvidence:\n${boundedContext}` : '')
+    return this.analyzeStructured(title, content, boundedContext ? `\nEvidence:\n${boundedContext}` : '', model)
   }
 
-  async analyzeWithPlan(title: string, content: string, plan?: string): Promise<MeetingAnalysis> {
+  async analyzeWithPlan(title: string, content: string, plan?: string, model?: string): Promise<MeetingAnalysis> {
     const extractionContext = plan?.trim() ? `\nPlan:\n${plan.trim()}` : ''
-    return this.analyzeStructured(title, content, extractionContext)
+    return this.analyzeStructured(title, content, extractionContext, model)
   }
 
-  private async analyzeStructured(title: string, content: string, extractionContext: string): Promise<MeetingAnalysis> {
+  private async analyzeStructured(title: string, content: string, extractionContext: string, model?: string): Promise<MeetingAnalysis> {
     const output = await this.requestCompletion([
       { role: 'system', content: '你是会议纪要任务抽取助手。只返回 JSON：summary 字符串、decisions 字符串数组、tasks 数组（title,description,owner_email,due_date,priority）、risks 数组（title,description,level）。priority 只能是 low、medium、high、urgent；level 只能是 low、medium、high。' },
       { role: 'user', content: `会议标题：${title}\n会议纪要：\n${content}${extractionContext}` },
-    ], true)
+    ], true, model)
     try {
       return normalizeAnalysis(JSON.parse(output))
     } catch (reason) {
@@ -70,21 +70,21 @@ export class DeepSeekService {
     }
   }
 
-  async plan(title: string, content: string): Promise<string> {
+  async plan(title: string, content: string, model?: string): Promise<string> {
     const plan = await this.requestCompletion([
       { role: 'system', content: 'Create a short plan for extracting decisions, tasks, and risks from meeting notes. Return plain text only.' },
       { role: 'user', content: `Meeting title: ${title}\nMeeting notes:\n${content}` },
-    ])
+    ], false, model)
     if (!plan.trim()) throw new ServiceUnavailableException('DeepSeek plan response is invalid')
     return plan.trim()
   }
 
-  private async requestCompletion(messages: ChatMessage[], jsonResponse = false): Promise<string> {
+  private async requestCompletion(messages: ChatMessage[], jsonResponse = false, model?: string): Promise<string> {
     const apiKey = process.env.DEEPSEEK_API_KEY
     if (!apiKey) throw new ServiceUnavailableException('DeepSeek API key is not configured')
     const baseUrl = (process.env.DEEPSEEK_BASE_URL ?? 'https://api.deepseek.com').replace(/\/$/, '')
-    const model = process.env.DEEPSEEK_MODEL ?? 'deepseek-v4-pro'
-    const body: Record<string, unknown> = { model, temperature: 0.1, messages }
+    const requestModel = model ?? process.env.DEEPSEEK_MODEL ?? 'deepseek-v4-pro'
+    const body: Record<string, unknown> = { model: requestModel, temperature: 0.1, messages }
     if (jsonResponse) body.response_format = { type: 'json_object' }
     const response = await fetch(`${baseUrl}/chat/completions`, {
       method: 'POST',
