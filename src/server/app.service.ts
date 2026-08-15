@@ -3,7 +3,7 @@ import bcrypt from 'bcryptjs'
 import jwt from 'jsonwebtoken'
 import { randomUUID } from 'node:crypto'
 import { pool } from './database'
-import { assertFeedbackInput, assertManagedTaskInput, assertTaskStatusTransition, assertTaskUpdateInput, canRegisterRole, canUpdateTask } from './authorization'
+import { assertFeedbackInput, assertManagedTaskInput, assertTaskStatusTransition, assertTaskUpdateInput, canRegisterRole, canUpdateTask, normalizeTaskState } from './authorization'
 import { DeepSeekService, normalizeAnalysis, type MeetingAnalysis } from './deepseek.service'
 import { applyDesensitization, type DesensitizationEntry } from './desensitization'
 import { buildProjectAnalytics } from '../utils/projectAnalytics'
@@ -439,20 +439,21 @@ export class AppService {
       if (user.role === 'member') await this.assertCurrentTaskAccess(user, task, query)
       if (user.role === 'manager') await this.assertProjectManager(user, task.project_id)
       try { assertTaskStatusTransition(task.status, (input.status ?? task.status) as any, user.role === 'manager') } catch (error) { throw new BadRequestException(error instanceof Error ? error.message : 'Invalid task transition') }
-      progress = input.progress
-      status = progress === 100 ? 'completed' : input.status
-      const afterProgress = progress ?? Number(task.progress ?? 0)
-      const afterStatus = status ?? task.status
+      const normalized = normalizeTaskState({ status: task.status, progress: Number(task.progress ?? 0) }, { status: input.status as any, progress: input.progress })
+      status = normalized.status
+      progress = normalized.progress
+      const afterProgress = normalized.progress
+      const afterStatus = normalized.status
       const createdAt = new Date().toISOString()
       const eventId = randomUUID()
-      await connection.execute("UPDATE tasks SET status=COALESCE(?,status), progress=COALESCE(?,progress), completed_at=CASE WHEN ?='completed' THEN COALESCE(completed_at,CURRENT_TIMESTAMP) ELSE completed_at END WHERE id=?", [status ?? null, progress ?? null, status ?? null, id])
+      await connection.execute("UPDATE tasks SET status=?, progress=?, completed_at=CASE WHEN ?='completed' THEN COALESCE(completed_at,CURRENT_TIMESTAMP) ELSE completed_at END WHERE id=?", [status, progress, status, id])
       await connection.execute('INSERT INTO project_progress_events (id,project_id,task_id,actor_id,event_type,before_progress,after_progress,before_status,after_status) VALUES (?,?,?,?,?,?,?,?,?)', [eventId, task.project_id, id, user.id, 'task_updated', Number(task.progress ?? 0), afterProgress, task.status, afterStatus])
       event = { id: eventId, projectId: task.project_id, taskId: id, taskTitle: task.title, actorId: user.id, actorName: user.name, eventType: 'task_updated', beforeProgress: Number(task.progress ?? 0), afterProgress, beforeStatus: task.status, afterStatus, createdAt }
       await connection.commit()
     } catch (error) { await connection.rollback(); throw error } finally { connection.release() }
     this.progressEvents?.publish(event!)
     await this.ensureTaskDeadlineWarnings({ ...task, status: status ?? task.status })
-    await this.audit(user.id, 'task.updated', 'task', id, { projectId: task.project_id, status: status ?? null, progress: progress ?? null })
+    await this.audit(user.id, 'task.updated', 'task', id, { projectId: task.project_id, status, progress })
     await this.invalidateBusinessReads()
     return { id, status, progress }
   }
@@ -462,6 +463,7 @@ export class AppService {
     const id = randomUUID()
     const connection = await pool.getConnection()
     let event: ProjectProgressEvent | undefined
+    let normalizedProgress = input.progress
     try {
       await connection.beginTransaction()
       const [tasks] = await connection.query<any[]>('SELECT id,title,assignee_id,project_id,status,progress FROM tasks WHERE id=? FOR UPDATE', [taskId])
@@ -473,12 +475,14 @@ export class AppService {
         const [projects] = await connection.query<any[]>('SELECT owner_id FROM projects WHERE id=?', [task.project_id])
         if (!projects[0] || projects[0].owner_id !== user.id) throw new ForbiddenException('You do not manage this project')
       }
-      await connection.execute('UPDATE tasks SET status=CASE WHEN ?=100 THEN "completed" ELSE status END, progress=?, completed_at=CASE WHEN ?=100 THEN COALESCE(completed_at,CURRENT_TIMESTAMP) ELSE completed_at END WHERE id=?', [input.progress, input.progress, input.progress, taskId])
+      const normalized = normalizeTaskState({ status: task.status, progress: Number(task.progress ?? 0) }, { progress: input.progress })
+      normalizedProgress = normalized.progress
+      await connection.execute('UPDATE tasks SET status=?, progress=?, completed_at=CASE WHEN ?="completed" THEN COALESCE(completed_at,CURRENT_TIMESTAMP) ELSE completed_at END WHERE id=?', [normalized.status, normalized.progress, normalized.status, taskId])
       await connection.execute('INSERT INTO task_feedbacks (id,task_id,author_id,content,progress) VALUES (?,?,?,?,?)', [id, taskId, user.id, input.content.trim(), input.progress])
-      const afterStatus = input.progress === 100 ? 'completed' : task.status
+      const afterStatus = normalized.status
       const eventId = randomUUID()
-      await connection.execute('INSERT INTO project_progress_events (id,project_id,task_id,actor_id,event_type,before_progress,after_progress,before_status,after_status,feedback_content) VALUES (?,?,?,?,?,?,?,?,?,?)', [eventId, task.project_id, taskId, user.id, 'feedback_created', Number(task.progress ?? 0), input.progress, task.status, afterStatus, input.content.trim()])
-      event = { id: eventId, projectId: task.project_id, taskId, taskTitle: task.title, actorId: user.id, actorName: user.name, eventType: 'feedback_created', beforeProgress: Number(task.progress ?? 0), afterProgress: input.progress, beforeStatus: task.status, afterStatus, feedbackContent: input.content.trim(), createdAt: new Date().toISOString() }
+      await connection.execute('INSERT INTO project_progress_events (id,project_id,task_id,actor_id,event_type,before_progress,after_progress,before_status,after_status,feedback_content) VALUES (?,?,?,?,?,?,?,?,?,?)', [eventId, task.project_id, taskId, user.id, 'feedback_created', Number(task.progress ?? 0), normalized.progress, task.status, afterStatus, input.content.trim()])
+      event = { id: eventId, projectId: task.project_id, taskId, taskTitle: task.title, actorId: user.id, actorName: user.name, eventType: 'feedback_created', beforeProgress: Number(task.progress ?? 0), afterProgress: normalized.progress, beforeStatus: task.status, afterStatus, feedbackContent: input.content.trim(), createdAt: new Date().toISOString() }
       await connection.commit()
     } catch (reason) {
       await connection.rollback()
@@ -487,11 +491,11 @@ export class AppService {
       connection.release()
     }
     this.progressEvents?.publish(event!)
-    await this.audit(user.id, 'task.feedback_created', 'task_feedback', id, { taskId, progress: input.progress })
+    await this.audit(user.id, 'task.feedback_created', 'task_feedback', id, { taskId, progress: normalizedProgress })
     const [tasks] = await pool.query<any[]>('SELECT id,title,assignee_id,project_id,due_date,status FROM tasks WHERE id=?', [taskId])
     if (tasks[0]) await this.ensureTaskDeadlineWarnings(tasks[0])
     await this.invalidateBusinessReads()
-    return { id, taskId, authorId: user.id, ...input }
+    return { id, taskId, authorId: user.id, ...input, progress: normalizedProgress }
   }
 
   private async ensureTaskDeadlineWarnings(task: { id: string; title: string; assignee_id: string; project_id: string; due_date?: string | Date | null; status: string }) {
@@ -563,7 +567,7 @@ export class AppService {
   }
 
   private async analysisRuntimeSettings(requestedMode?: AnalysisMode): Promise<{ model: string; mode: AnalysisMode }> {
-    const response = await pool.query<any[]>('SELECT model,mode FROM system_settings WHERE id=1').catch(() => undefined)
+    const response: any = await pool.query<any[]>('SELECT model,mode FROM system_settings WHERE id=1').catch(() => undefined)
     const rows = Array.isArray(response) && Array.isArray(response[0]) ? response[0] : []
     return {
       model: normalizeSystemModel(rows[0]?.model ?? process.env.DEEPSEEK_MODEL),
@@ -721,8 +725,9 @@ export class AppService {
     const [assignees] = await pool.query<any[]>('SELECT u.id FROM project_members pm JOIN users u ON u.id=pm.user_id WHERE pm.project_id=? AND pm.user_id=? AND u.is_active=TRUE AND u.role IN ("manager","member")', [input.projectId, input.assigneeId])
     if (!assignees[0]) throw new BadRequestException('Task assignee must be an active project member')
     const id = randomUUID()
-    const status = input.progress === 100 ? 'completed' : input.status ?? 'todo'
-    const progress = input.progress ?? 0
+    const normalized = normalizeTaskState({ status: 'todo', progress: 0 }, { status: input.status as any, progress: input.progress })
+    const status = normalized.status
+    const progress = normalized.progress
     const connection = await pool.getConnection()
     try {
       await connection.beginTransaction()
@@ -736,17 +741,18 @@ export class AppService {
 
   async closeTask(user: SessionUser, taskId: string) {
     if (user.role !== 'manager') throw new ForbiddenException('Only managers can close tasks')
-    const [rows] = await pool.query<any[]>('SELECT project_id FROM tasks WHERE id=?', [taskId])
+    const [rows] = await pool.query<any[]>('SELECT project_id,status,progress FROM tasks WHERE id=?', [taskId])
     if (!rows[0]) throw new BadRequestException('Task does not exist')
     await this.assertProjectManager(user, rows[0].project_id)
-    await pool.execute('UPDATE tasks SET status="closed" WHERE id=?', [taskId])
+    const normalized = normalizeTaskState({ status: rows[0].status, progress: Number(rows[0].progress ?? 0) }, { status: 'closed' })
+    await pool.execute('UPDATE tasks SET status=?,progress=? WHERE id=?', [normalized.status, normalized.progress, taskId])
     await this.audit(user.id, 'task.closed', 'task', taskId)
     await this.invalidateBusinessReads()
     return { id: taskId, status: 'closed' }
   }
 
   async updateManagedTask(user: SessionUser, taskId: string, input: { title?: string; description?: string; assigneeId?: string; priority?: 'low' | 'medium' | 'high' | 'urgent'; status?: 'todo' | 'in_progress' | 'completed'; progress?: number; dueDate?: string | null }) {
-    const [rows] = await pool.query<any[]>('SELECT id,project_id,assignee_id,status,title,due_date FROM tasks WHERE id=?', [taskId])
+    const [rows] = await pool.query<any[]>('SELECT id,project_id,assignee_id,status,progress,title,due_date FROM tasks WHERE id=?', [taskId])
     const task = rows[0]
     if (!task) throw new BadRequestException('Task does not exist')
     await this.assertProjectManager(user, task.project_id)
@@ -761,26 +767,31 @@ export class AppService {
     if (input.assigneeId !== undefined) { fields.push('assignee_id=?'); values.push(input.assigneeId) }
     if (input.priority !== undefined) { fields.push('priority=?'); values.push(input.priority) }
     if (input.dueDate !== undefined) { fields.push('due_date=?'); values.push(input.dueDate || null) }
-    if (input.status !== undefined) { fields.push('status=?'); values.push(input.status) }
-    if (input.progress !== undefined) { fields.push('progress=?'); values.push(input.progress); if (input.progress === 100 && input.status === undefined) fields.push('status="completed"') }
-    if (input.status === 'completed' || input.progress === 100) fields.push('completed_at=COALESCE(completed_at,CURRENT_TIMESTAMP)')
+    if (input.status !== undefined || input.progress !== undefined) {
+      try { assertTaskStatusTransition(task.status, (input.status ?? task.status) as any, true) } catch (error) { throw new BadRequestException(error instanceof Error ? error.message : 'Invalid task transition') }
+      const normalized = normalizeTaskState({ status: task.status, progress: Number(task.progress ?? 0) }, { status: input.status as any, progress: input.progress })
+      fields.push('status=?', 'progress=?')
+      values.push(normalized.status, normalized.progress)
+      if (normalized.status === 'completed') fields.push('completed_at=COALESCE(completed_at,CURRENT_TIMESTAMP)')
+    }
     if (!fields.length) throw new BadRequestException('No task changes supplied')
     await pool.execute(`UPDATE tasks SET ${fields.join(',')} WHERE id=?`, [...values, taskId])
     await this.audit(user.id, 'task.updated', 'task', taskId, { fields: Object.keys(input).filter((key) => input[key as keyof typeof input] !== undefined), status: input.status ?? (input.progress === 100 ? 'completed' : null), progress: input.progress ?? null })
     await this.invalidateBusinessReads()
-    return { id: taskId, ...input }
+    return { id: taskId, ...input, ...(input.status !== undefined || input.progress !== undefined ? normalizeTaskState({ status: task.status, progress: Number(task.progress ?? 0) }, { status: input.status as any, progress: input.progress }) : {}) }
   }
 
   async reopenTask(user: SessionUser, taskId: string, status: 'todo' | 'in_progress' = 'todo') {
     if (user.role !== 'manager') throw new ForbiddenException('Only managers can close tasks')
-    const [rows] = await pool.query<any[]>('SELECT project_id,status FROM tasks WHERE id=?', [taskId])
+    const [rows] = await pool.query<any[]>('SELECT project_id,status,progress FROM tasks WHERE id=?', [taskId])
     if (!rows[0]) throw new BadRequestException('Task does not exist')
     await this.assertProjectManager(user, rows[0].project_id)
     if (rows[0].status !== 'closed') throw new BadRequestException('Only closed tasks can be reopened')
-    await pool.execute('UPDATE tasks SET status=? WHERE id=?', [status, taskId])
-    await this.audit(user.id, 'task.reopened', 'task', taskId, { status })
+    const normalized = normalizeTaskState({ status: rows[0].status, progress: Number(rows[0].progress ?? 0) }, { status })
+    await pool.execute('UPDATE tasks SET status=?,progress=? WHERE id=?', [normalized.status, normalized.progress, taskId])
+    await this.audit(user.id, 'task.reopened', 'task', taskId, { status: normalized.status, progress: normalized.progress })
     await this.invalidateBusinessReads()
-    return { id: taskId, status }
+    return { id: taskId, status: normalized.status, progress: normalized.progress }
   }
 
   private async visibleTaskForNote(user: SessionUser, taskId: string) {

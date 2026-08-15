@@ -24,6 +24,16 @@ export function isValidProgress(value: unknown): value is number {
   return typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= 100
 }
 
+export function normalizeTaskState(current: { status: TaskStatus; progress: number }, requested: { status?: TaskStatus; progress?: number }): { status: TaskStatus; progress: number } {
+  let status = requested.status ?? current.status
+  let progress = requested.progress ?? current.progress
+  if (status === 'closed') return { status, progress }
+  if (status === 'todo' && current.progress === 100 && requested.progress === undefined) progress = 0
+  if (status === 'in_progress' && current.progress === 100 && requested.progress === undefined) progress = 99
+  if (status === 'completed' || progress === 100) return { status: 'completed', progress: 100 }
+  return { status, progress: Math.min(progress, 99) }
+}
+
 export function assertTaskUpdateInput(input: { status?: unknown; progress?: unknown }): void {
   if (input.status !== undefined && !isTaskStatus(input.status)) throw new Error('Invalid task status')
   if (input.progress !== undefined && !isValidProgress(input.progress)) throw new Error('Invalid task progress')
