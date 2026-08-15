@@ -62,7 +62,7 @@ it.skip('creates an overdue warning only when an identical open risk does not al
     .mockResolvedValueOnce([[{ owner_id: 'manager-1' }]] as any)
     .mockResolvedValueOnce([[]] as any)
     .mockResolvedValueOnce([[]] as any)
-  const connection = { beginTransaction: vi.fn(), commit: vi.fn(), rollback: vi.fn(), release: vi.fn(), execute: (...args: any[]) => execute(...args), query: vi.fn().mockResolvedValueOnce([[]]).mockResolvedValueOnce([[{ owner_id: 'manager-1' }]]).mockResolvedValueOnce([[{ id: 'member-1' }, { id: 'manager-1' }]]) }
+  const connection = { beginTransaction: vi.fn(), commit: vi.fn(), rollback: vi.fn(), release: vi.fn(), execute: (...args: any[]) => (execute as any)(...args), query: vi.fn().mockResolvedValueOnce([[]]).mockResolvedValueOnce([[{ owner_id: 'manager-1' }]]).mockResolvedValueOnce([[{ id: 'member-1' }, { id: 'manager-1' }]]) }
   vi.spyOn(pool, 'getConnection').mockResolvedValue(connection as any)
   const execute = vi.spyOn(pool, 'execute').mockResolvedValue([] as any)
 

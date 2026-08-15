@@ -35,3 +35,6 @@
 - 服务层测试覆盖管理员向单个用户和角色发送、非管理员拒绝发送、无有效接收人拒绝发送。
 - 界面测试覆盖管理员可见发送面板、其他角色不可见，以及通知正文在列表中显示。
 - 执行相关测试和生产构建。
+## Supersession Note (2026-08-16)
+
+Review-assignment notifications and task deadline reminders are system-generated exceptions to this administrator-authored notification workflow. They are persisted by their owning business transactions and use recipient-specific deduplication; this document remains the specification for manual administrator notifications.

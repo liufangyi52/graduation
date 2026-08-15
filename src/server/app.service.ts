@@ -714,7 +714,7 @@ export class AppService {
 
   private async assertCurrentTaskAccess(user: SessionUser, task: { project_id: string; assignee_id: string }, query = pool.query.bind(pool)) {
     if (user.role !== 'member' || task.assignee_id !== user.id) throw new ForbiddenException('You cannot access this task')
-    const [memberships] = await query('SELECT 1 FROM project_members WHERE project_id=? AND user_id=?', [task.project_id, user.id])
+    const [memberships] = await (query('SELECT 1 FROM project_members WHERE project_id=? AND user_id=?', [task.project_id, user.id]) as Promise<any>)
     if (!memberships[0]) throw new ForbiddenException('You cannot access this task')
   }
 

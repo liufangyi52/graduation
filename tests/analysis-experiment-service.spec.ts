@@ -10,11 +10,11 @@ const result = { summary: 'Safe summary', decisions: [], tasks: [], risks: [] }
 
 it('uses stored runtime model and mode for analysis execution', async () => {
   const runner = { run: vi.fn().mockResolvedValue({ result, metadata: { mode: 'rag', model: 'deepseek-v4-pro', modelCallCount: 1, retrievalEnabled: false, retrievalStatus: 'not_configured' } }) }
-  vi.spyOn(pool, 'query').mockImplementation(async (sql: string) => {
+  vi.spyOn(pool, 'query').mockImplementation((async (sql: string) => {
     if (String(sql).includes('system_settings')) return [[{ model: 'deepseek-v4-pro', mode: 'rag' }]] as any
     if (String(sql).includes('owner_id')) return [[{ owner_id: 'manager-1' }]] as any
     return [[{ id: 'meeting-1', title: 'Standup', project_id: 'project-1', current_version_id: 'version-1', desensitized_content: '[PHONE]' }]] as any
-  })
+  }) as any)
   const execute = vi.spyOn(pool, 'execute').mockResolvedValue([] as any)
 
   await new AppService({} as any, { invalidateBusinessReads: vi.fn() } as any, runner as any).analyzeMeeting(manager, 'meeting-1')
