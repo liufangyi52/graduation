@@ -20,6 +20,23 @@ it('creates a manually assigned task for an active project member', async () => 
   expect(connection.execute).not.toHaveBeenCalledWith(expect.stringContaining('INSERT INTO notifications'), expect.any(Array))
 })
 
+it.each([
+  ['admin', 'admin-1'],
+  ['auditor', 'auditor-1'],
+] as const)('rejects an active %s account as a task assignee', async (role, assigneeId) => {
+  vi.spyOn(pool, 'query')
+    .mockResolvedValueOnce([[{ owner_id: 'manager-1', deleted_at: null }]] as any)
+    .mockImplementationOnce(async (sql: unknown) => String(sql).includes('role IN')
+      ? [[]] as any
+      : [[{ id: assigneeId, role, is_active: 1 }]] as any)
+  vi.spyOn(pool, 'getConnection').mockResolvedValue({ beginTransaction: vi.fn(), execute: vi.fn(), commit: vi.fn(), rollback: vi.fn(), release: vi.fn() } as any)
+  vi.spyOn(pool, 'execute').mockResolvedValue([] as any)
+
+  await expect(new AppService({} as any).createTask(manager, {
+    projectId: 'project-1', title: 'Prepare release', assigneeId, priority: 'high', status: 'todo', progress: 0,
+  })).rejects.toThrow('Task assignee must be an active project member')
+})
+
 it('rejects a member closing a task', async () => {
   await expect(new AppService({} as any).closeTask(member, 'task-1')).rejects.toThrow('Only managers can close tasks')
 })

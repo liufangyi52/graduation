@@ -6,4 +6,5 @@ import type { ProjectProgressEvent } from './project-progress.types'
 export class ProjectProgressEventsService {
   constructor(@Inject(ProjectProgressGateway) private readonly gateway: ProjectProgressGateway) {}
   publish(event: ProjectProgressEvent) { this.gateway.emitProgress(event) }
+  revokeMember(projectId: string, userId: string) { return this.gateway.revokeMember(projectId, userId) }
 }

@@ -343,8 +343,8 @@ export class AppService {
 
   async addProjectMember(user: SessionUser, projectId: string, userId: string, projectRole: 'manager' | 'member') {
     await this.assertProjectManager(user, projectId)
-    const [users] = await pool.query<any[]>('SELECT id,is_active FROM users WHERE id=?', [userId])
-    if (!users[0] || !users[0].is_active) throw new BadRequestException('Project member must be an active account')
+    const [users] = await pool.query<any[]>('SELECT id,is_active,role FROM users WHERE id=?', [userId])
+    if (!users[0] || !users[0].is_active || !['manager', 'member'].includes(users[0].role)) throw new BadRequestException('Project member must be an active manager or member')
     await pool.execute('INSERT INTO project_members (project_id,user_id,project_role) VALUES (?,?,?) ON DUPLICATE KEY UPDATE project_role=VALUES(project_role)', [projectId, userId, projectRole])
     await this.audit(user.id, 'project.member_added', 'project_member', userId, { projectId, projectRole })
     await this.invalidateBusinessReads()
@@ -368,6 +368,7 @@ export class AppService {
     if (projects[0]?.owner_id === userId) throw new BadRequestException('Project owner cannot be removed')
     const [result] = await pool.execute<any>('DELETE FROM project_members WHERE project_id=? AND user_id=?', [projectId, userId])
     if (!result.affectedRows) throw new BadRequestException('Project member does not exist')
+    await this.progressEvents?.revokeMember(projectId, userId)
     await this.audit(user.id, 'project.member_removed', 'project_member', userId, { projectId })
     await this.invalidateBusinessReads()
     return { projectId, userId, removed: true }
@@ -376,8 +377,10 @@ export class AppService {
   async tasks(user: SessionUser) {
     this.assertNotAuditorBusinessRead(user)
     return this.cache.getOrLoad(await this.cache.key('tasks', user), async () => {
-      const filter = user.role === 'member' ? 'WHERE t.assignee_id=? AND p.deleted_at IS NULL' : user.role === 'manager' ? 'WHERE p.owner_id=? AND p.deleted_at IS NULL' : 'WHERE p.deleted_at IS NULL'
-      const [rows] = await pool.query<any[]>(`SELECT t.id,t.title,t.description,t.priority,t.status,t.progress,t.created_at,t.completed_at,t.due_date,p.id project_id,p.name project_name,u.id assignee_id,u.name assignee_name FROM tasks t JOIN projects p ON p.id=t.project_id JOIN users u ON u.id=t.assignee_id ${filter} ORDER BY t.updated_at DESC`, filter ? [user.id] : [])
+      const membershipJoin = user.role === 'member' ? 'JOIN project_members pm ON pm.project_id=t.project_id AND pm.user_id=t.assignee_id' : ''
+      const filter = user.role === 'member' ? 'WHERE pm.user_id=? AND p.deleted_at IS NULL' : user.role === 'manager' ? 'WHERE p.owner_id=? AND p.deleted_at IS NULL' : 'WHERE p.deleted_at IS NULL'
+      const values = user.role === 'member' || user.role === 'manager' ? [user.id] : []
+      const [rows] = await pool.query<any[]>(`SELECT t.id,t.title,t.description,t.priority,t.status,t.progress,t.created_at,t.completed_at,t.due_date,p.id project_id,p.name project_name,u.id assignee_id,u.name assignee_name FROM tasks t JOIN projects p ON p.id=t.project_id ${membershipJoin} JOIN users u ON u.id=t.assignee_id ${filter} ORDER BY t.updated_at DESC`, values)
       return rows
     })
   }
@@ -433,7 +436,7 @@ export class AppService {
       task = rows[0]
       if (task && !canUpdateTask(user, task.assignee_id)) throw new ForbiddenException('You cannot update this task')
       if (!task) throw new BadRequestException('任务不存在')
-      if (user.role === 'member' && task.assignee_id !== user.id) throw new ForbiddenException('只能更新本人任务')
+      if (user.role === 'member') await this.assertCurrentTaskAccess(user, task, query)
       if (user.role === 'manager') await this.assertProjectManager(user, task.project_id)
       try { assertTaskStatusTransition(task.status, (input.status ?? task.status) as any, user.role === 'manager') } catch (error) { throw new BadRequestException(error instanceof Error ? error.message : 'Invalid task transition') }
       progress = input.progress
@@ -465,6 +468,7 @@ export class AppService {
       const task = tasks[0]
       if (!task) throw new BadRequestException('Task does not exist')
       if (!canUpdateTask(user, task.assignee_id)) throw new ForbiddenException('You cannot update this task')
+      if (user.role === 'member') await this.assertCurrentTaskAccess(user, task, connection.query.bind(connection))
       if (user.role === 'manager') {
         const [projects] = await connection.query<any[]>('SELECT owner_id FROM projects WHERE id=?', [task.project_id])
         if (!projects[0] || projects[0].owner_id !== user.id) throw new ForbiddenException('You do not manage this project')
@@ -649,6 +653,12 @@ export class AppService {
     if (!rows[0] || rows[0].owner_id !== user.id) throw new ForbiddenException('You do not manage this project')
   }
 
+  private async assertCurrentTaskAccess(user: SessionUser, task: { project_id: string; assignee_id: string }, query = pool.query.bind(pool)) {
+    if (user.role !== 'member' || task.assignee_id !== user.id) throw new ForbiddenException('You cannot access this task')
+    const [memberships] = await query('SELECT 1 FROM project_members WHERE project_id=? AND user_id=?', [task.project_id, user.id])
+    if (!memberships[0]) throw new ForbiddenException('You cannot access this task')
+  }
+
   private async assertProjectViewer(user: SessionUser, projectId: string) {
     if (user.role === 'manager') return this.assertProjectManager(user, projectId)
     if (user.role === 'member') {
@@ -681,9 +691,10 @@ export class AppService {
     this.assertNotAuditorBusinessRead(user)
     if (user.role === 'admin') return []
     return this.cache.getOrLoad(await this.cache.key('overdue-tasks', user), async () => {
-      const filter = user.role === 'manager' ? 'p.owner_id=?' : 't.assignee_id=?'
+      const membershipJoin = user.role === 'member' ? 'JOIN project_members pm ON pm.project_id=t.project_id AND pm.user_id=t.assignee_id' : ''
+      const filter = user.role === 'manager' ? 'p.owner_id=?' : 'pm.user_id=?'
       const [rows] = await pool.query<any[]>(`SELECT t.id,t.title,t.priority,t.status,t.progress,DATE_FORMAT(t.due_date,'%Y-%m-%d') due_date,p.name project_name,u.name assignee_name
-      FROM tasks t JOIN projects p ON p.id=t.project_id JOIN users u ON u.id=t.assignee_id
+      FROM tasks t JOIN projects p ON p.id=t.project_id ${membershipJoin} JOIN users u ON u.id=t.assignee_id
       WHERE p.deleted_at IS NULL AND t.status NOT IN ('completed','closed') AND t.due_date < CURDATE() AND ${filter}
       ORDER BY t.due_date ASC,t.priority DESC LIMIT 20`, [user.id])
       return rows
@@ -693,7 +704,7 @@ export class AppService {
   async createTask(user: SessionUser, input: { projectId: string; title: string; description?: string; assigneeId: string; priority: 'low' | 'medium' | 'high' | 'urgent'; status?: 'todo' | 'in_progress' | 'completed'; progress?: number; dueDate?: string | null }) {
     try { assertManagedTaskInput(input) } catch (error) { throw new BadRequestException(error instanceof Error ? error.message : 'Invalid task') }
     await this.assertProjectManager(user, input.projectId)
-    const [assignees] = await pool.query<any[]>('SELECT u.id FROM project_members pm JOIN users u ON u.id=pm.user_id WHERE pm.project_id=? AND pm.user_id=? AND u.is_active=TRUE', [input.projectId, input.assigneeId])
+    const [assignees] = await pool.query<any[]>('SELECT u.id FROM project_members pm JOIN users u ON u.id=pm.user_id WHERE pm.project_id=? AND pm.user_id=? AND u.is_active=TRUE AND u.role IN ("manager","member")', [input.projectId, input.assigneeId])
     if (!assignees[0]) throw new BadRequestException('Task assignee must be an active project member')
     const id = randomUUID()
     const status = input.progress === 100 ? 'completed' : input.status ?? 'todo'
@@ -726,7 +737,7 @@ export class AppService {
     if (!task) throw new BadRequestException('Task does not exist')
     await this.assertProjectManager(user, task.project_id)
     if (input.assigneeId !== undefined) {
-      const [assignees] = await pool.query<any[]>('SELECT u.id FROM project_members pm JOIN users u ON u.id=pm.user_id WHERE pm.project_id=? AND pm.user_id=? AND u.is_active=TRUE', [task.project_id, input.assigneeId])
+      const [assignees] = await pool.query<any[]>('SELECT u.id FROM project_members pm JOIN users u ON u.id=pm.user_id WHERE pm.project_id=? AND pm.user_id=? AND u.is_active=TRUE AND u.role IN ("manager","member")', [task.project_id, input.assigneeId])
       if (!assignees[0]) throw new BadRequestException('Task assignee must be an active project member')
     }
     const fields: string[] = []
@@ -759,7 +770,11 @@ export class AppService {
   }
 
   private async visibleTaskForNote(user: SessionUser, taskId: string) {
-    const [rows] = await pool.query<any[]>('SELECT t.id,t.project_id,t.assignee_id,p.owner_id FROM tasks t JOIN projects p ON p.id=t.project_id WHERE t.id=? AND p.deleted_at IS NULL', [taskId])
+    const sql = user.role === 'member'
+      ? 'SELECT t.id,t.project_id,t.assignee_id,p.owner_id FROM tasks t JOIN projects p ON p.id=t.project_id JOIN project_members pm ON pm.project_id=t.project_id AND pm.user_id=t.assignee_id WHERE t.id=? AND t.assignee_id=? AND pm.user_id=? AND p.deleted_at IS NULL'
+      : 'SELECT t.id,t.project_id,t.assignee_id,p.owner_id FROM tasks t JOIN projects p ON p.id=t.project_id WHERE t.id=? AND p.deleted_at IS NULL'
+    const values = user.role === 'member' ? [taskId, user.id, user.id] : [taskId]
+    const [rows] = await pool.query<any[]>(sql, values)
     const task = rows[0]
     if (!task) throw new BadRequestException('Task does not exist')
     if (user.role === 'manager' && task.owner_id === user.id) return task
@@ -1136,10 +1151,10 @@ export class AppService {
     this.assertNotAuditorBusinessRead(user)
     return this.cache.getOrLoad(await this.cache.key('risks', user), async () => {
       const [rows] = user.role === 'member'
-      ? await pool.query<any[]>('SELECT r.*,u.name project_owner_name FROM risks r JOIN tasks t ON t.id=r.task_id JOIN projects p ON p.id=r.project_id JOIN users u ON u.id=p.owner_id WHERE t.assignee_id=? AND p.deleted_at IS NULL ORDER BY r.created_at DESC', [user.id])
+      ? await pool.query<any[]>('SELECT r.*,t.title task_title,u.name project_owner_name FROM risks r JOIN tasks t ON t.id=r.task_id JOIN project_members pm ON pm.project_id=t.project_id AND pm.user_id=t.assignee_id JOIN projects p ON p.id=r.project_id JOIN users u ON u.id=p.owner_id WHERE t.assignee_id=? AND p.deleted_at IS NULL ORDER BY r.created_at DESC', [user.id])
       : user.role === 'manager'
-        ? await pool.query<any[]>('SELECT r.*,u.name project_owner_name FROM risks r JOIN projects p ON p.id=r.project_id JOIN users u ON u.id=p.owner_id WHERE p.owner_id=? AND p.deleted_at IS NULL ORDER BY r.created_at DESC', [user.id])
-        : await pool.query<any[]>('SELECT r.*,u.name project_owner_name FROM risks r JOIN projects p ON p.id=r.project_id JOIN users u ON u.id=p.owner_id WHERE p.deleted_at IS NULL ORDER BY r.created_at DESC')
+        ? await pool.query<any[]>('SELECT r.*,t.title task_title,u.name project_owner_name FROM risks r LEFT JOIN tasks t ON t.id=r.task_id JOIN projects p ON p.id=r.project_id JOIN users u ON u.id=p.owner_id WHERE p.owner_id=? AND p.deleted_at IS NULL ORDER BY r.created_at DESC', [user.id])
+        : await pool.query<any[]>('SELECT r.*,t.title task_title,u.name project_owner_name FROM risks r LEFT JOIN tasks t ON t.id=r.task_id JOIN projects p ON p.id=r.project_id JOIN users u ON u.id=p.owner_id WHERE p.deleted_at IS NULL ORDER BY r.created_at DESC')
       return rows
     })
   }

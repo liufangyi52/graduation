@@ -37,4 +37,11 @@ export class ProjectProgressGateway {
   }
 
   emitProgress(event: ProjectProgressEvent) { this.server?.to(`project:${event.projectId}`).emit('project.progress.updated', event) }
+
+  async revokeMember(projectId: string, userId: string) {
+    const sockets = await this.server.in(`project:${projectId}`).fetchSockets()
+    await Promise.all(sockets
+      .filter((socket) => socket.data.user?.id === userId)
+      .map((socket) => socket.leave(`project:${projectId}`)))
+  }
 }
