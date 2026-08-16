@@ -15,6 +15,7 @@ const screenIds = [
   'audit-log',
 ]
 const requiredSelectors = ['.app-shell', '.sidebar', '.topbar', '.prototype-screen']
+const managerLandmarks = ['待审核会议', '项目甘特图', '提交 AI 分析', '候选任务', '待处理', '风险详情']
 
 function readRequired(relativePath: string) {
   const filePath = path.join(root, relativePath)
@@ -27,6 +28,7 @@ const css = readRequired('prototype/prototype.css')
 const missing = [
   ...screenIds.filter((screenId) => !html.includes(`data-screen="${screenId}"`)),
   ...requiredSelectors.filter((selector) => !css.includes(selector)),
+  ...managerLandmarks.filter((landmark) => !html.includes(landmark)),
 ]
 
 if (missing.length) throw new Error(`Prototype gallery contract failed: ${missing.join(', ')}`)
