@@ -56,6 +56,13 @@ it('migrates a unique notification dedupe key', () => {
   expect(source).toContain("if (error.code !== 'ER_DUP_KEYNAME') throw error")
 })
 
+it('includes column names in meeting migration definitions', () => {
+  const source = readFileSync(new URL('../src/server/migrate.ts', import.meta.url), 'utf8')
+
+  expect(source).toContain("addColumnIfMissing('meetings', 'meeting_at', 'meeting_at DATETIME NULL')")
+  expect(source).toContain("addColumnIfMissing('meetings', 'attendees', 'attendees VARCHAR(1000) NULL')")
+})
+
 it.skip('creates an overdue warning only when an identical open risk does not already exist', async () => {
   vi.spyOn(pool, 'query')
     .mockResolvedValueOnce([[{ id: 'task-1', assignee_id: 'member-1', project_id: 'project-1', due_date: new Date('2020-01-01T00:00:00.000Z'), status: 'in_progress', title: 'Release' }]] as any)
