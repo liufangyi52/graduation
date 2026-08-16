@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light" />
+    <title>会议纪要智能体 - 原型图</title>
+    <link rel="stylesheet" href="./prototype.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <aside class="sidebar" aria-label="主导航">
+        <div class="brand"><span class="brand-mark">M</span><span>MeetingFlow</span></div>
+        <p class="nav-label">项目协作</p>
+        <nav class="nav-list">
+          <a href="?screen=dashboard">工作台</a>
+          <a href="?screen=project-detail">项目</a>
+          <a href="?screen=meeting-import">会议纪要</a>
+          <a href="?screen=task-board">任务管理</a>
+          <a href="?screen=risk-center">风险中心</a>
+        </nav>
+        <p class="nav-label">系统管理</p>
+        <nav class="nav-list">
+          <a href="?screen=task-feedback">通知中心</a>
+          <a href="?screen=audit-log">审计日志</a>
+          <a href="?screen=settings">系统设置</a>
+        </nav>
+        <div class="sidebar-user"><span class="avatar avatar-blue">林</span><span><b>林晨</b><small>项目经理</small></span></div>
+      </aside>
+      <section class="workspace">
+        <header class="topbar">
+          <div class="crumb"><span>智能会议任务平台</span><span class="crumb-separator">/</span><b id="screen-title">工作台</b></div>
+          <div class="topbar-actions"><button class="icon-button" id="notification-toggle" type="button" aria-label="打开通知">通知 <i class="count">3</i></button><span class="avatar">LC</span></div>
+        </header>
+        <div class="notification-drawer" id="notification-drawer" hidden>
+          <div class="drawer-head"><b>通知中心</b><button class="text-button" type="button">全部已读</button></div>
+          <article><span class="notice-dot"></span><div><b>AI 解析已完成</b><p>“8 月项目例会”已生成 6 条候选任务。</p><small>10 分钟前</small></div></article>
+          <article><span class="notice-dot warning"></span><div><b>任务即将到期</b><p>“接口联调与回归测试”将在 2 天后到期。</p><small>1 小时前</small></div></article>
+          <div class="empty-notification">暂无通知</div>
+        </div>
+        <div class="content">
+          <section class="prototype-screen" data-screen="dashboard"><h1>项目经理工作台</h1></section>
+          <section class="prototype-screen" data-screen="project-detail"><h1>项目详情</h1></section>
+          <section class="prototype-screen" data-screen="meeting-import"><h1>会议纪要导入</h1></section>
+          <section class="prototype-screen" data-screen="ai-review"><h1>AI 复核</h1></section>
+          <section class="prototype-screen" data-screen="task-board"><h1>任务看板</h1></section>
+          <section class="prototype-screen" data-screen="risk-center"><h1>风险中心</h1></section>
+          <section class="prototype-screen" data-screen="my-tasks"><h1>我的任务</h1></section>
+          <section class="prototype-screen" data-screen="task-feedback"><h1>任务反馈</h1></section>
+          <section class="prototype-screen" data-screen="settings"><h1>系统设置</h1></section>
+          <section class="prototype-screen" data-screen="audit-log"><h1>审计日志</h1></section>
+        </div>
+      </section>
+    </main>
+    <script src="./prototype.js"></script>
+  </body>
+</html>

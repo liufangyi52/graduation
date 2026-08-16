@@ -8,6 +8,8 @@
     "server": "tsx src/server/main.ts",
     "reset:existing-user-passwords": "tsx scripts/reset-existing-user-passwords.ts",
     "smoke:project-core-closure": "tsx scripts/smoke-project-core-closure.ts",
+    "prototype:verify": "tsx scripts/verify-prototype-gallery.ts",
+    "prototype:export": "tsx scripts/export-prototype.ts",
     "build": "vue-tsc --noEmit --incremental false && vite build",
     "test": "vitest run"
   },
