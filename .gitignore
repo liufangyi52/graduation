@@ -7,3 +7,6 @@ dist/
 .vite/
 .worktrees/
 .superpowers/
+.docx_work/
+scripts/__pycache__/
+docs/test-evidence-*.png

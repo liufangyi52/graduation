@@ -138,6 +138,8 @@ export async function migrate() {
     CONSTRAINT fk_versions_creator FOREIGN KEY (created_by) REFERENCES users(id)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
   await addColumnIfMissing('meetings', 'current_version_id', 'current_version_id CHAR(36) NULL')
+  await addColumnIfMissing('meetings', 'meeting_at', 'DATETIME NULL')
+  await addColumnIfMissing('meetings', 'attendees', 'VARCHAR(1000) NULL')
   await addColumnIfMissing('ai_analyses', 'rejection_reason', 'rejection_reason VARCHAR(500) NULL')
   await addColumnIfMissing('projects', 'deleted_at', 'deleted_at TIMESTAMP NULL')
   await addColumnIfMissing('projects', 'deleted_by', 'deleted_by CHAR(36) NULL')

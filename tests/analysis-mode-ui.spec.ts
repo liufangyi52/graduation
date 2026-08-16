@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import { createMeetingService } from '../src/services/meetingService'
 
 const appSource = readFileSync(new URL('../src/App.vue', import.meta.url), 'utf8')
+const meetingImportSource = readFileSync(new URL('../src/components/MeetingImportPage.vue', import.meta.url), 'utf8')
 const reviewSource = readFileSync(new URL('../src/components/MeetingReviewPage.vue', import.meta.url), 'utf8')
 
 afterEach(() => vi.restoreAllMocks())
@@ -45,10 +46,10 @@ it('maps recorded analysis execution fields with an llm default', async () => {
 
 it('offers all modes at submission and retry, and limits the RAG warning to recorded metadata', () => {
   for (const mode of ['manual', 'llm', 'rag', 'agent']) {
-    expect(appSource).toContain(`value="${mode}"`)
+    expect(meetingImportSource).toContain(`value="${mode}"`)
     expect(reviewSource).toContain(`value="${mode}"`)
   }
-  expect(appSource).toContain('v-model="meetingAnalysisMode"')
+  expect(meetingImportSource).toContain('v-model="analysisMode"')
   expect(reviewSource).toContain('v-model="reanalysisMode"')
   expect(reviewSource).toContain('检索未配置')
   expect(reviewSource).toContain("retrievalStatus === 'not_configured'")

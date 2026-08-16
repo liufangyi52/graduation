@@ -77,14 +77,17 @@ export function createMeetingService(token: string) {
       const analyses = await request<any[]>('/analyses')
       state.analyses.splice(0, state.analyses.length, ...analyses.map(mapAnalysisRecord))
     },
-    async create(projectId: string, title: string, content: string) {
-      const item = await request<any>('/meetings', { method: 'POST', body: JSON.stringify({ projectId, title, content }) })
+    async create(projectId: string, title: string, content: string, metadata: { meetingAt?: string; attendees?: string; desensitize?: boolean } = {}) {
+      const item = await request<any>('/meetings', { method: 'POST', body: JSON.stringify({ projectId, title, content, ...metadata }) })
       return { id: item.id, projectId, title, content, createdAt: new Date().toISOString() }
     },
-    async importFile(projectId: string, title: string, file: File) {
+    async importFile(projectId: string, title: string, file: File, metadata: { meetingAt?: string; attendees?: string; desensitize?: boolean } = {}) {
       const body = new FormData()
       body.append('projectId', projectId)
       body.append('title', title)
+      if (metadata.meetingAt) body.append('meetingAt', metadata.meetingAt)
+      if (metadata.attendees) body.append('attendees', metadata.attendees)
+      if (metadata.desensitize !== undefined) body.append('desensitize', String(metadata.desensitize))
       body.append('file', file)
       return request<any>('/meetings/import', { method: 'POST', body })
     },

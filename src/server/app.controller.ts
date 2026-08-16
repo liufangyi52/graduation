@@ -60,7 +60,7 @@ export class AppController {
   @Post('notifications/demo') async createRoleDemoNotifications(@Headers('authorization') authorization?: string) { return this.app.createRoleDemoNotifications(await this.user(authorization)) }
   @Patch('projects/:id/archive') async archiveProject(@Headers('authorization') authorization: string | undefined, @Param('id') id: string) { return this.app.archiveProject(await this.user(authorization), id) }
   @Post('meetings') async createMeeting(@Headers('authorization') authorization: string | undefined, @Body() body: CreateMeetingDto) { return this.app.createMeeting(await this.user(authorization), body) }
-  @Post('meetings/import') @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 2 * 1024 * 1024 } })) async importMeeting(@Headers('authorization') authorization: string | undefined, @Body() body: ImportMeetingDto, @UploadedFile() file?: UploadedMeetingFile) {
+  @Post('meetings/import') @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 10 * 1024 * 1024 } })) async importMeeting(@Headers('authorization') authorization: string | undefined, @Body() body: ImportMeetingDto, @UploadedFile() file?: UploadedMeetingFile) {
     const imported = await extractMeetingFileContent(file)
     return this.app.createMeeting(await this.user(authorization), { ...body, content: imported.content, sourceType: imported.sourceType })
   }

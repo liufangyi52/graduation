@@ -1,14 +1,14 @@
 import mammoth from 'mammoth'
 import { BadRequestException } from '@nestjs/common'
 
-const maxFileBytes = 2 * 1024 * 1024
+const maxFileBytes = 10 * 1024 * 1024
 const docxMime = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
 
 export type UploadedMeetingFile = { originalname: string; mimetype: string; size: number; buffer: Buffer }
 
 export async function extractMeetingFileContent(file?: UploadedMeetingFile): Promise<{ content: string; sourceType: 'txt' | 'docx' }> {
   if (!file) throw new BadRequestException('Meeting file is required')
-  if (file.size > maxFileBytes) throw new BadRequestException('Meeting file must be 2 MiB or smaller')
+  if (file.size > maxFileBytes) throw new BadRequestException('Meeting file must be 10 MiB or smaller')
   const extension = file.originalname.toLowerCase().split('.').pop()
   let content = ''
   if (extension === 'txt' && (!file.mimetype || file.mimetype.startsWith('text/'))) {

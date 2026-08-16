@@ -28,6 +28,19 @@ it('uploads a meeting file as multipart data without forcing a JSON content type
   expect(request.headers).not.toHaveProperty('Content-Type')
 })
 
+it('sends meeting metadata and the per-import desensitization choice with a file import', async () => {
+  const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ id: 'm1' }), { status: 200 }))
+  const file = new File(['hello'], 'minutes.txt', { type: 'text/plain' })
+
+  await createMeetingService('token').importFile('p1', 'Minutes', file, { meetingAt: '2026-08-16T09:30:00.000Z', attendees: '林晨、张晓', desensitize: false })
+
+  const request = fetchMock.mock.calls[0][1] as RequestInit
+  const body = request.body as FormData
+  expect(body.get('meetingAt')).toBe('2026-08-16T09:30:00.000Z')
+  expect(body.get('attendees')).toBe('林晨、张晓')
+  expect(body.get('desensitize')).toBe('false')
+})
+
 it('does not include a rejection reason in the audit event', async () => {
   const manager = { id: 'manager-1', role: 'manager' as const, name: 'Manager', email: 'manager@example.com' }
   const connection = { beginTransaction: vi.fn(), commit: vi.fn(), rollback: vi.fn(), release: vi.fn(), query: vi.fn()

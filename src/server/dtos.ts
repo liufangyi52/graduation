@@ -69,6 +69,9 @@ export class CreateMeetingDto {
   @IsUUID() projectId!: string
   @IsString() @MinLength(1) title!: string
   @IsString() @MinLength(1) content!: string
+  @IsOptional() @IsDateString() meetingAt?: string
+  @IsOptional() @IsString() @MaxLength(1000) attendees?: string
+  @IsOptional() @IsBoolean() desensitize?: boolean
 }
 
 export class ReviewDto {
@@ -130,6 +133,9 @@ export class TaskNoteDto {
 export class ImportMeetingDto {
   @IsUUID() projectId!: string
   @IsString() @MinLength(1) title!: string
+  @IsOptional() @IsDateString() meetingAt?: string
+  @IsOptional() @IsString() @MaxLength(1000) attendees?: string
+  @IsOptional() @IsBoolean() desensitize?: boolean
 }
 
 export class AnalysisRequestDto {

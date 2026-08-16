@@ -727,7 +727,8 @@ export class AppService {
     throw new ForbiddenException('You cannot view this project')
   }
 
-  private async desensitizeForProject(projectId: string, content: string): Promise<{ content: string; entries: DesensitizationEntry[] }> {
+  private async desensitizeForProject(projectId: string, content: string, enabled = true): Promise<{ content: string; entries: DesensitizationEntry[] }> {
+    if (!enabled) return { content, entries: [] }
     const [rows] = await pool.query<any[]>('SELECT desensitize FROM system_settings WHERE id=1')
     if (rows[0]?.desensitize === false || Number(rows[0]?.desensitize) === 0) return { content, entries: [] }
     const [rules] = await pool.query<any[]>('SELECT id,pattern,replacement,enabled FROM desensitization_rules WHERE project_id=? AND enabled=TRUE ORDER BY created_at ASC,id ASC', [projectId])
@@ -974,17 +975,17 @@ export class AppService {
     return rows[0].project_id as string
   }
 
-  async createMeeting(user: SessionUser, input: { projectId: string; title: string; content: string; sourceType?: 'text' | 'txt' | 'docx' }) {
+  async createMeeting(user: SessionUser, input: { projectId: string; title: string; content: string; meetingAt?: string; attendees?: string; desensitize?: boolean; sourceType?: 'text' | 'txt' | 'docx' }) {
     await this.assertProjectManager(user, input.projectId)
     if (!input.title?.trim() || !input.content?.trim()) throw new BadRequestException('Meeting title and content are required')
     const id = randomUUID()
     const versionId = randomUUID()
     const originalContent = input.content.trim()
-    const desensitized = await this.desensitizeForProject(input.projectId, originalContent)
+    const desensitized = await this.desensitizeForProject(input.projectId, originalContent, input.desensitize !== false)
     const connection = await pool.getConnection()
     try {
       await connection.beginTransaction()
-      await connection.execute('INSERT INTO meetings (id,project_id,created_by,title,content,current_version_id) VALUES (?,?,?,?,?,?)', [id, input.projectId, user.id, input.title.trim(), originalContent, versionId])
+      await connection.execute('INSERT INTO meetings (id,project_id,created_by,title,content,current_version_id,meeting_at,attendees) VALUES (?,?,?,?,?,?,?,?)', [id, input.projectId, user.id, input.title.trim(), originalContent, versionId, input.meetingAt ? new Date(input.meetingAt) : null, input.attendees?.trim() || null])
       await connection.execute('INSERT INTO meeting_versions (id,meeting_id,version_number,source_type,original_content,desensitized_content,created_by) VALUES (?,?,?,?,?,?,?)', [versionId, id, 1, input.sourceType ?? 'text', originalContent, desensitized.content, user.id])
       await this.writeDesensitizationLogs(connection, versionId, user.id, desensitized.entries)
       await connection.commit()
@@ -994,7 +995,7 @@ export class AppService {
     } finally {
       connection.release()
     }
-    await this.audit(user.id, 'meeting.created', 'meeting', id, { projectId: input.projectId, versionNumber: 1 })
+    await this.audit(user.id, 'meeting.created', 'meeting', id, { projectId: input.projectId, versionNumber: 1, meetingAt: input.meetingAt ?? null, attendees: input.attendees?.trim() || null, desensitize: input.desensitize !== false })
     await this.invalidateBusinessReads()
     return { id, ...input, versionId, status: 'created' }
   }
@@ -1038,7 +1039,7 @@ export class AppService {
 
   async reviewDetail(user: SessionUser, meetingId: string) {
     this.assertNotAuditorBusinessRead(user)
-    const [meetings] = await pool.query<any[]>(`SELECT m.id,m.project_id,m.title,m.content,m.created_at,
+    const [meetings] = await pool.query<any[]>(`SELECT m.id,m.project_id,m.title,m.content,m.created_at,m.meeting_at,m.attendees,
       COALESCE(v.version_number,(SELECT MAX(v2.version_number) FROM meeting_versions v2 WHERE v2.meeting_id=m.id)) version_number,
       COALESCE(v.desensitized_content,(SELECT v3.desensitized_content FROM meeting_versions v3 WHERE v3.meeting_id=m.id ORDER BY v3.version_number DESC LIMIT 1)) desensitized_content
       FROM meetings m JOIN projects p ON p.id=m.project_id LEFT JOIN meeting_versions v ON v.id=m.current_version_id
@@ -1066,7 +1067,7 @@ export class AppService {
         return { ...analysis, result: safeResult, rejection_reason: undefined }
       })()
       : analysis
-    return { meeting: { id: meeting.id, projectId: meeting.project_id, title: meeting.title, createdAt: meeting.created_at, versionNumber: meeting.version_number, desensitizedContent: text }, analysis: safeAnalysis, draft, evidence }
+    return { meeting: { id: meeting.id, projectId: meeting.project_id, title: meeting.title, createdAt: meeting.created_at, meetingAt: meeting.meeting_at, attendees: meeting.attendees, versionNumber: meeting.version_number, desensitizedContent: text }, analysis: safeAnalysis, draft, evidence }
   }
 
   async saveReviewDraft(user: SessionUser, analysisId: string, draft: ReviewDraft) {
