@@ -15,21 +15,21 @@
 
 ## 产品界面
 
-真实界面截图来自 `docs/prototypes/`，展示从项目总览到任务执行的主要工作流。
+真实界面截图来自 `docs/prototypes/`，按登录入口和角色工作流展示系统主要页面。
 
-| 项目总览 | 会议导入 | AI 结果审核 |
+| 登录入口 | 项目经理工作台 | AI 审核 |
 | --- | --- | --- |
-| ![项目仪表盘](docs/prototypes/01-dashboard.png) | ![会议纪要导入](docs/prototypes/03-meeting-import.png) | ![AI 分析审核](docs/prototypes/04-ai-review.png) |
+| ![登录界面](docs/prototypes/登录界面.png) | ![项目经理工作台](docs/prototypes/项目经理1.png) | ![AI 审核](docs/prototypes/项目经理10.png) |
 
-| 项目详情 | 任务看板 | 风险中心 |
+| 项目成员工作台 | 系统管理员工作台 | 审计人员工作台 |
 | --- | --- | --- |
-| ![项目详情](docs/prototypes/02-project-detail.png) | ![任务看板](docs/prototypes/05-task-board.png) | ![风险中心](docs/prototypes/06-risk-center.png) |
+| ![项目成员工作台](docs/prototypes/项目成员1.png) | ![系统管理员页面](docs/prototypes/系统管理员1.png) | ![审计人员页面](docs/prototypes/审计人员1.png) |
 
-| 我的任务 | 工作反馈 | 系统设置 |
+| 注册入口 | 项目经理任务页面 | 项目成员任务页面 |
 | --- | --- | --- |
-| ![我的任务](docs/prototypes/07-my-tasks.png) | ![任务反馈](docs/prototypes/08-task-feedback.png) | ![系统设置](docs/prototypes/09-settings.png) |
+| ![注册界面](docs/prototypes/注册界面.png) | ![项目经理任务页面](docs/prototypes/项目经理5.png) | ![项目成员任务页面](docs/prototypes/项目成员5.png) |
 
-![审计日志](docs/prototypes/10-audit-log.png)
+![系统架构图](docs/prototypes/系统架构图.png)
 
 ## AI 应用链路
 
@@ -66,7 +66,7 @@
 
 ## 系统架构
 
-![系统技术架构](docs/technical-architecture-diagram.png)
+![系统技术架构](docs/prototypes/系统架构图.png)
 
 | 层次 | 技术与职责 |
 | --- | --- |
